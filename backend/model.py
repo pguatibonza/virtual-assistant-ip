@@ -1,4 +1,4 @@
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings, AzureChatOpenAI
 from langchain_community.tools.tavily_search import TavilySearchResults
 from dotenv import load_dotenv
 from supabase import create_client
@@ -28,10 +28,15 @@ import os
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT=os.getenv("AZURE_OPENAI_ENDPOINT")
+OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
-chat = ChatOpenAI(model="gpt-4o", temperature=0)
+chat= AzureChatOpenAI(azure_deployment="gpt-4o_rfmanrique")
 
-#Prompt
+
+
+#Prompt feedback 
 system = """
 
 "Eres un tutor de programación encargado de brindar retroalimentación formativa a estudiantes del curso de introducción a la programación, quienes estan aprendiendo python. 
@@ -132,7 +137,7 @@ def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
     return True
 """
 
-
+# Prompt rag
 class State(TypedDict):
     messages:Annotated[list,add_messages]
 
@@ -152,7 +157,7 @@ graph_builder.add_edge("senecode_assistant", END)
 
 graph = graph_builder.compile(checkpointer=memory)
 config={"configurable":{"thread_id":1}}
-lista=[solucion1,solucion2]
+lista=["hola",solucion1,solucion2,"como puedes mejorar el codigo"]
 for i in lista:
     for event in graph.stream({"messages": ("user", i)},config):
         for value in event.values():

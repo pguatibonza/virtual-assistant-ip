@@ -1,0 +1,13 @@
+langgraph
+langchain
+langchain-commnuity
+lagnchain-openai
+python-dotenv
+supabase
+langsmith
+unstructured
+python-magic
+langchain-unstructured
+python-magic-bin==0.4.14
+"unstructured[md]"
+langchain-experimental

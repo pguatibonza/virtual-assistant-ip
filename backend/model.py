@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings, AzureChatOpenAI
 from langchain_community.tools.tavily_search import TavilySearchResults
 from dotenv import load_dotenv
 from supabase import create_client
-from langgraph.checkpoint.sqlite import SqliteSaver
+#from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.output_parsers import StrOutputParser
 from typing import Annotated
 from typing_extensions import TypedDict
@@ -25,14 +25,18 @@ from langchain.schema import AIMessage
 from langchain_core.prompts import MessagesPlaceholder
 import logging
 import os
+import load_data
 
+#Inicialización variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT=os.getenv("AZURE_OPENAI_ENDPOINT")
 OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o_rfmanrique")
+vector_store=load_data.load_vector_store()
+retriever=vector_store.as_retriever(search_kwargs={"k":4})
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 
 
 
@@ -138,18 +142,93 @@ def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
 """
 
 # Prompt rag
+
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+
+
+
+system="""
+Eres un monitor asistente de la clase de introducción a la programación en Python. Tu función principal es responder dudas conceptuales que los estudiantes tengan sobre los diferentes módulos del curso. El curso está dividido en 4 módulos:
+
+Módulo 1: Introducción a la programación
+
+En este módulo, los estudiantes aprenden los fundamentos de la programación, cómo funcionan los lenguajes de programación y el proceso de escribir, ejecutar y depurar código.
+Módulo 2: Condicionales
+
+Aquí los estudiantes estudian las estructuras condicionales como if, else, y elif para tomar decisiones en el código.
+Módulo 3: Bucles
+
+En este módulo se cubren bucles for y while, junto con conceptos como control de bucles (break, continue).
+Módulo 4: Librerías
+
+Los estudiantes exploran cómo importar y utilizar librerías en Python, como math o random, y cómo instalar librerías externas.
+Para responder preguntas de los estudiantes, tendrás como referencia el siguiente contexto tomado de un libro de programación:
+
+{context}
+
+Tu tarea es usar este contexto para responder de manera precisa, clara y útil a las preguntas. Intenta explicar los conceptos con ejemplos y lenguaje accesible para principiantes, proporcionando respuestas bien estructuradas y fáciles de entender. Si es necesario, usa fragmentos de código simples para ilustrar los conceptos.
+El usuario se encuentra en el nivel : {level}
+Utiliza el formato Markdown, incluyendo ‘ para código en línea.
+
+Input del usuario : {user_input}
+"""
+
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),      
+        ("placeholder","{messages}")
+    ]
+)
+
+conceptual_agent=prompt|chat
+
+#Prompt  Question re-writer
+
+system = """
+Eres un reformulador de preguntas que convierte una pregunta de entrada en una versión mejorada, optimizada para la búsqueda en una vector store. 
+Observa la entrada y trata de razonar sobre la intención o significado semántico subyacente. La vector store trata tema sobre introducción a la programación.
+En algunas ocasiones el estudiante hará follow-up questions, por lo que debes reformularla basado en los mensajes anteriores para que pueda entrar a la vector store.
+Debes ser simple y conciso.
+
+La pregunta es : {user_input}
+"""
+
+re_write_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        ("placeholder","{messages}"),
+    ]
+)
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+
+question_rewriter = re_write_prompt | chat  
+
+
+
 class State(TypedDict):
     messages:Annotated[list,add_messages]
 
 graph_builder=StateGraph(State)
-memory = SqliteSaver.from_conn_string(":memory:")
-
+#memory = SqliteSaver.from_conn_string(":memory:")
+memory = MemorySaver()
 def senecode_assistant(state:State):
     message=feedback_agent.invoke(
     {"problem_description":descripcion,"parameter_description":parametros,
     "return_description":retorno, "primitives_forbiden_description":primitivas,"user_input":state["messages"][-1], "messages":state["messages"]})
 
     return {"messages": [message]}
+def conceptual_assistant(state:State):
+    user_input=state['messages'][-1]
+    #Reformula pregunta para vector store
+    query=question_rewriter.invoke({"user_input": user_input, "messages":state["messages"]}).content
+
+    #Extrae contexto segun el query
+    context=retriever.invoke(query)
+
+    #Responde de acuerdo al contexto
+    response=conceptual_agent.invoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
+    return {"messages": [response]}
+
 
 graph_builder.add_node("senecode_assistant",senecode_assistant)
 graph_builder.add_edge(START, "senecode_assistant")
@@ -159,6 +238,6 @@ graph = graph_builder.compile(checkpointer=memory)
 config={"configurable":{"thread_id":1}}
 lista=["hola",solucion1,solucion2,"como puedes mejorar el codigo"]
 for i in lista:
-    for event in graph.stream({"messages": ("user", i)},config):
+    for event in graph.stream({"messages": ("user", i),"level":2},config):
         for value in event.values():
             print("Assistant:", value["messages"][-1].content)

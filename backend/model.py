@@ -35,7 +35,6 @@ AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT=os.getenv("AZURE_OPENAI_ENDPOINT")
 OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 vector_store=load_data.load_vector_store()
 retriever=vector_store.as_retriever(search_kwargs={"k":1})
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
@@ -87,10 +86,6 @@ Make sure that the feedback is constructive and easy to understand, avoiding any
 Be positive. Use the markdown format, including the ‘ for online coding.
 Make your own solution first to look any differences with the student solution
 
-¡Sé positivo y alentador! Utiliza el formato Markdown, incluyendo ‘ para código en línea.
-Primero realiza tu la solución para mirar diferencias con la solución que te manda el estudiante.
-
-Recuerda que no puedes escribir bloques de codigo.
 Remember you cannot write any lines of code
 """
 
@@ -184,6 +179,7 @@ The student is on the level : {level}
 
 Use markdown format, including ‘ for online coding
 Student input : {user_input}
+If the student changes their mind, or his request is not about conceptual doubts, escalate the task to the main assistant
 """
 
 prompt = ChatPromptTemplate.from_messages(
@@ -323,7 +319,7 @@ def conceptual_assistant(state:State):
 
 def primary_assistant(state:State):
     user_input=state['messages'][-1]
-    message=main_assistant.invoke({"user_input":user_input})
+    message=main_assistant.invoke({"user_input":user_input,"messages":state['messages']})
 
     return {"messages":[message],"user_input": user_input}
 
@@ -420,8 +416,8 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":12}}
-lista=["ahora quiero que me ayudes a corregir el codigo de un problema"]
+config={"configurable":{"thread_id":14}}
+lista=["hola", "quiero que me expliques bucles","gracias"]
 for i in lista:
     for event in graph.stream({"messages": ("user", i),"level":2},config):
         for value in event.values():

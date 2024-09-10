@@ -35,6 +35,7 @@ AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT=os.getenv("AZURE_OPENAI_ENDPOINT")
 OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 vector_store=load_data.load_vector_store()
 retriever=vector_store.as_retriever(search_kwargs={"k":1})
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
@@ -86,6 +87,10 @@ Make sure that the feedback is constructive and easy to understand, avoiding any
 Be positive. Use the markdown format, including the ‘ for online coding.
 Make your own solution first to look any differences with the student solution
 
+¡Sé positivo y alentador! Utiliza el formato Markdown, incluyendo ‘ para código en línea.
+Primero realiza tu la solución para mirar diferencias con la solución que te manda el estudiante.
+
+Recuerda que no puedes escribir bloques de codigo.
 Remember you cannot write any lines of code
 """
 
@@ -148,6 +153,8 @@ def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
 """
 
 # Prompt rag
+
+
 
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 

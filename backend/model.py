@@ -149,6 +149,8 @@ def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
 
 # Prompt rag
 
+
+
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 
 
@@ -177,6 +179,7 @@ The student is on the level : {level}
 
 Use markdown format, including ‘ for online coding
 Student input : {user_input}
+If the student changes their mind, or his request is not about conceptual doubts, escalate the task to the main assistant
 """
 
 prompt = ChatPromptTemplate.from_messages(
@@ -316,7 +319,7 @@ def conceptual_assistant(state:State):
 
 def primary_assistant(state:State):
     user_input=state['messages'][-1]
-    message=main_assistant.invoke({"user_input":user_input})
+    message=main_assistant.invoke({"user_input":user_input,"messages":state['messages']})
 
     return {"messages":[message],"user_input": user_input}
 
@@ -413,8 +416,8 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":12}}
-lista=["ahora quiero que me ayudes a corregir el codigo de un problema"]
+config={"configurable":{"thread_id":14}}
+lista=["hola", "quiero que me expliques bucles","gracias"]
 for i in lista:
     for event in graph.stream({"messages": ("user", i),"level":2},config):
         for value in event.values():

@@ -159,6 +159,7 @@ system="""
 You are a specialized assistant for Answering conceptual doubts about the "introduction to programming course" 
 The main assistant delegates work to you whenever the student needs conceptual help.
 If the student changes their mind, escalate the task back to the main assistant.
+If the students submits any code block, escalate the task back to the main assistant.
 Your main function is to answer conceptual doubts/inquiries that students may have about the different modules of the course. The course is compound of 4 modules:
 
 Module 1 :  Introduction to programming
@@ -174,7 +175,8 @@ To answer the student doubts, you will have the following context taken from a p
 
 {context}
 
-Try to explain the concepts in the most briefly way. If the student wants to emphasize in a particular item, proceed. 
+Explain the concepts in the most summarized way. 
+If the student wants to emphasize in a particular item, proceed. 
 The student is on the level : {level}
 
 Use markdown format, including ‘ for online coding
@@ -306,7 +308,11 @@ def senecode_assistant(state:State):
 
     return {"messages": [message]}
 def conceptual_assistant(state:State):
-    user_input=state['messages'][-2].tool_calls[0]['args']['request']
+
+    if state['messages'][-2].tool_calls:
+        user_input=state['messages'][-2].tool_calls[0]['args']['request']
+    else :
+        user_input = state['messages'][-1].content
     #Reformula pregunta para vector store
     #query=question_rewriter.invoke({"user_input": user_input, "messages":state["messages"]}).content
 
@@ -416,7 +422,7 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":14}}
+config={"configurable":{"thread_id":15}}
 lista=["hola", "quiero que me expliques bucles","gracias"]
 for i in lista:
     for event in graph.stream({"messages": ("user", i),"level":2},config):

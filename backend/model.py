@@ -26,7 +26,7 @@ from langchain_core.prompts import MessagesPlaceholder
 from langchain_core.messages import ToolMessage
 import logging
 import os
-import load_data
+from backend import load_data
 
 #Inicialización variables
 load_dotenv()
@@ -418,7 +418,10 @@ graph_builder.add_edge("leave_skill", "primary_assistant")
 graph = graph_builder.compile(checkpointer=memory)
 config={"configurable":{"thread_id":14}}
 lista=["hola", "quiero que me expliques bucles","gracias"]
-for i in lista:
-    for event in graph.stream({"messages": ("user", i),"level":2},config):
-        for value in event.values():
-            print("Assistant:", value["messages"][-1].content)
+# for i in lista:
+#     for event in graph.stream({"messages": ("user", i),"level":2},config):
+#         for value in event.values():
+#             print("Assistant:", value["messages"][-1].content)
+
+
+

@@ -1,4 +1,5 @@
 .env
+*.sql
 chatbot/
 venv/
-*.sql
+*__pycache__/

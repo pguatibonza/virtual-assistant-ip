@@ -28,7 +28,7 @@ import logging
 import os
 from backend import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
-
+from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
 #Inicialización variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -41,12 +41,6 @@ retriever=vector_store.as_retriever(search_kwargs={"k":1})
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 
 
-class CompleteOrEscalate(BaseModel):
-    """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
-    who can re-route the dialog based on the student's needs."""
-
-    cancel: bool =True
-    reason: str
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -130,18 +124,6 @@ question_rewriter = re_write_prompt | chat
 
 #Main assistant 
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
-class toConceptualAssistant(BaseModel):
-    """
-    Transfers work to a specialized assistant  to handle any conceptual doubts/inquiries about the programming course. The doubts must be about programming
-    """
-    request: str=Field(description="Any necessary follow-up questions the conceptual assistant  should clarify  before proceeding. The questions must be about programming. ")
-
-class toFeedbackAssistant(BaseModel):
-    """
-    Transfers work to a specialized assistant to give detailed feedback about a code problem
-    """
-    code : str=Field(description="The code block which the student wants to get feedback from")
-    name : str=Field(description= "The name of the coding problem which the student wants to get feedback from")
 
 
 primary_assistant_prompt=ChatPromptTemplate.from_messages(

@@ -1,3 +1,4 @@
 from frontend.chatbot_ui import app
+import asyncio
 
-app()
+asyncio.run(app())

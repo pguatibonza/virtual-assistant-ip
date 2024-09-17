@@ -27,7 +27,10 @@ from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
+#import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+#from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+#from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
 from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
 #Inicialización variables
 load_dotenv()
@@ -297,13 +300,13 @@ graph_builder.add_edge("leave_skill", "primary_assistant")
 graph = graph_builder.compile(checkpointer=memory)
 config={"configurable":{"thread_id":10}}
 lista=["quiero que me expliques condicionales ", "ahora ciclos"]
-for i in lista:
-    async for event in graph.astream_events({"messages": ("user", i),"level":2},config,version="v1"):
-        kind=event["event"]
-        if kind=="on_chat_model_stream":
-            content=event["data"]["chunk"].content
-            if content:
-                print(content, end='')
+# for i in lista:
+#     async for event in graph.astream_events({"messages": ("user", i),"level":2},config,version="v1"):
+#         kind=event["event"]
+#         if kind=="on_chat_model_stream":
+#             content=event["data"]["chunk"].content
+#             if content:
+#                 print(content, end='')
 
 
 

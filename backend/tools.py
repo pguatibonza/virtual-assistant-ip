@@ -19,6 +19,3 @@ class toFeedbackAssistant(BaseModel):
     """
     code : str=Field(description="The code block which the student wants to get feedback from")
     name : str=Field(description= "The name of the coding problem which the student wants to get feedback from")
-
-def get_insights():
-    

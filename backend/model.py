@@ -38,8 +38,7 @@ OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
 vector_store=load_data.load_vector_store()
 retriever=vector_store.as_retriever(search_kwargs={"k":1})
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
-
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
 
 
 prompt = ChatPromptTemplate.from_messages(
@@ -100,7 +99,7 @@ def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
     return True
 """
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
 
 
 prompt = ChatPromptTemplate.from_messages(
@@ -112,18 +111,9 @@ prompt = ChatPromptTemplate.from_messages(
 
 conceptual_agent=prompt|chat.bind_tools([CompleteOrEscalate])
 
-re_write_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", QUESTION_REWRITER_PROMPT),
-        ("placeholder","{messages}"),
-    ]
-)
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
-
-question_rewriter = re_write_prompt | chat  
 
 #Main assistant 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
 
 
 primary_assistant_prompt=ChatPromptTemplate.from_messages(
@@ -179,38 +169,38 @@ class State(TypedDict):
         ],update_dialog_stack
     ]
     level : str
+    stream_message :Any
 
 graph_builder=StateGraph(State)
 #memory = SqliteSaver.from_conn_string(":memory:")
 memory = MemorySaver()
 
 
-def senecode_assistant(state:State):
-    message=feedback_agent.invoke(
+async def senecode_assistant(state:State):
+    message=await feedback_agent.ainvoke(
     {"problem_description":descripcion,"parameter_description":parametros,
-    "return_description":retorno, "primitives_forbiden_description":primitivas,"user_input":state["messages"][-1], "messages":state["messages"]})
+    "return_description":retorno, "primitives_forbidden_description":primitivas,"user_input":state["messages"][-1], "messages":state["messages"]})
 
     return {"messages": [message]}
-def conceptual_assistant(state:State):
+async def conceptual_assistant(state:State):
     if state['messages'][-2].tool_calls:
         user_input=state['messages'][-2].tool_calls[0]['args']['request']
     else :
         user_input = state['messages'][-1].content
-    #Reformula pregunta para vector store
-    #query=question_rewriter.invoke({"user_input": user_input, "messages":state["messages"]}).content
 
     #Extrae contexto segun el query
-    context=retriever.invoke(user_input)
+    context= await retriever.ainvoke(user_input)
 
     #Responde de acuerdo al contexto
-    response=conceptual_agent.invoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
+    response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
     return {"messages": [response]}
 
-def primary_assistant(state:State):
+async def primary_assistant(state:State):
     user_input=state['messages'][-1]
-    message=main_assistant.invoke({"user_input":user_input,"messages":state['messages']})
-
-    return {"messages":[message],"user_input": user_input}
+    message= await main_assistant.ainvoke({"user_input":user_input,"messages":state['messages']})
+    
+    
+    return {"messages":[message],"user_input": user_input }
 
 def route_primary_assistant(
     state: State,
@@ -305,12 +295,15 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":14}}
-lista=["hola", "Explicame qué es pandas y para qué sirve", "Gracias"]
+config={"configurable":{"thread_id":10}}
+lista=["quiero que me expliques condicionales ", "ahora ciclos"]
 for i in lista:
-    for event in graph.stream({"messages": ("user", i),"level":2},config):
-        for value in event.values():
-            print("Assistant:", value["messages"][-1].content)
+    async for event in graph.astream_events({"messages": ("user", i),"level":2},config,version="v1"):
+        kind=event["event"]
+        if kind=="on_chat_model_stream":
+            content=event["data"]["chunk"].content
+            if content:
+                print(content, end='')
 
 
 

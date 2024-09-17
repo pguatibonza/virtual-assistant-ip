@@ -2,8 +2,10 @@ import streamlit as st
 from backend.model import graph
 import random
 import time
+import asyncio
 
-def app():
+
+async def app():
 
     st.title("Asistente Virtual IP")
 
@@ -25,8 +27,15 @@ def app():
         
         with st.chat_message("assistant"):
             response = ""
-            for event in graph.stream({"messages": ("user", prompt), "level": 2}, config):
-                for value in event.values():
-                    response += value["messages"][-1].content + " "
-                    st.markdown(response)
+            message_placeholder = st.empty()  # Create a placeholder to update the response
+            
+            async for event in graph.astream_events({"messages": ("user", prompt), "level": 2}, config, version="v1"):
+                kind=event["event"]
+                if kind=="on_chat_model_stream":
+                    content=event["data"]["chunk"].content
+                    if content:
+                        response += content
+                        message_placeholder.markdown(response)
+                    
+                    
         st.session_state.messages.append({"role": "assistant", "content": response})

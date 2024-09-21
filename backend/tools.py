@@ -1,5 +1,10 @@
+from typing import Optional
 from langchain_core.pydantic_v1 import BaseModel, Field
-
+from langchain_openai import AzureChatOpenAI
+from db_connection import fetch_data
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.tools import tool
 class CompleteOrEscalate(BaseModel):
     """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
     who can re-route the dialog based on the student's needs."""
@@ -19,3 +24,85 @@ class toFeedbackAssistant(BaseModel):
     """
     code : str=Field(description="The code block which the student wants to get feedback from")
     name : str=Field(description= "The name of the coding problem which the student wants to get feedback from")
+    problem_description : str=Field(description="The information about the problem the student wants to get feedback from")
+class ProblemName(BaseModel):
+    """Joke to tell user."""
+
+    found: bool = Field(description="Whether the problem was found or not")
+    name: Optional[str] = Field(description="The problem name found", default=None)
+
+
+
+@tool
+def extract_problem_info(problem_name):
+    """
+    Extract the user problem info
+    """
+    query = f"SELECT titulo FROM calificador_anonimo.dashboard_problema ;"
+
+    excercises=fetch_data(query); 
+
+    chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+
+    EXTRACT_PROBLEM_INFO_PROMPT = """
+    You are a specialized SQL assistant who is going to receive a user_input.
+    The user_input must be a problem name.
+    Your task is to identify which problem the user is referring to based on the following list 
+    of problems:
+
+    {exercises}
+
+
+    If the user_input is related to any of the problem list names, you must return a JSON structure in the format below.
+    Take in mind that the user may write wrong the user input, so you must do your best effort to identify which problem he is talking of.
+    {{
+        "found": true,
+        "problem_name": "problem_name"
+    }}
+
+    If the user_input does not match any of the problem list names, return a JSON structure in the format:
+    {{
+        "found": false,
+        "problem_name": null
+    }}
+    """
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", EXTRACT_PROBLEM_INFO_PROMPT),
+            ('human',"{user_input}")
+
+        ]
+    )
+    sql_agent = prompt | chat.with_structured_output(ProblemName)
+
+    response=sql_agent.invoke({"user_input":problem_name,"exercises":excercises})
+    print(response)
+    if response.found:
+        query = f"SELECT * FROM calificador_anonimo.dashboard_problema WHERE titulo = '{response.name}' LIMIT 1;"
+        exercise= fetch_data(query)
+        if exercise:=fetch_data(query):
+                exercise=exercise[0]
+                query = f"SELECT * FROM calificador_anonimo.dashboard_argumento WHERE problema_id = {exercise['id']} ORDER BY posicion ASC;"
+                if parameters := fetch_data(query):
+                    parameters_str = "\n".join([f"name: {param['nombre']} - type: {param['tipo']} - description: {param['descripcion']}" for param in parameters])
+                else:
+                    parameters_str = "No parameters found"
+                query = f"""
+                    SELECT *
+                    FROM calificador_anonimo.dashboard_problema_funciones_prohibidas AS fp
+                    JOIN calificador_anonimo.dashboard_funcion AS f
+                    ON f.id = fp.funcion_id
+                    WHERE fp.problema_id = 157;
+                """
+                if primitives := fetch_data(query):
+                    primitives_str = "\n".join([f"name: {prim['nombre']} - description: {prim['descripcion']}" for prim in primitives])
+                else:
+                    primitives_str = "No primitives found"   
+                return f"""Problem description : {exercise['descripcion']} \n function_name :  {exercise['funcion']}\n parameter_description : {parameters_str}
+                return_description : {exercise['retorno_descripcion']} \n return_type : {exercise['retorno_tipo']} 
+                primitives_forbidden_description : {primitives_str}"""
+ 
+        return "Error retrieving problem"
+    else : 
+        return "Problem not found"
+                    

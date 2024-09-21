@@ -27,11 +27,12 @@ from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
-#import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info
+#import load_data
 #from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
 #from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
-from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
+
 #Inicialización variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -123,12 +124,13 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
     [
         ("system",PRIMARY_ASSISTANT_PROMPT),
         ("placeholder","{messages}"),
-        ("human", "Student input : {user_input}" ),
+        ("human", " {user_input}" ),
         
     ]
 )
 
-main_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant])
+main_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info])
+
 
 #Utilities
 
@@ -173,6 +175,8 @@ class State(TypedDict):
     ]
     level : str
     stream_message :Any
+    problem_description : str
+
 
 graph_builder=StateGraph(State)
 #memory = SqliteSaver.from_conn_string(":memory:")
@@ -180,11 +184,20 @@ memory = MemorySaver()
 
 
 async def senecode_assistant(state:State):
+    message=state['messages'][-2]
+    print(message)
+    if message.tool_calls:
+        if message.tool_calls[0]["name"]== toFeedbackAssistant.__name__:
+            state["problem_description"]=message.tool_calls[0]["args"]['problem_description']
+            state["user_input"]=message.tool_calls[0]["args"]["code"]
+    else :
+        state["user_input"]=state["messages"][-1]
+        state["problem_description"]=state.get("problem_description")
+        
     message=await feedback_agent.ainvoke(
-    {"problem_description":descripcion,"parameter_description":parametros,
-    "return_description":retorno, "primitives_forbidden_description":primitivas,"user_input":state["messages"][-1], "messages":state["messages"]})
+    {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
 
-    return {"messages": [message]}
+    return {"messages": [message],"problem_description":state["problem_description"]}
 async def conceptual_assistant(state:State):
     if state['messages'][-2].tool_calls:
         user_input=state['messages'][-2].tool_calls[0]['args']['request']
@@ -210,6 +223,7 @@ def route_primary_assistant(
 ) -> Literal[
     "enter_conceptual_assistant",
     "enter_feedback_assistant",
+    "tools",
     "__end__",
 ]:
     route = tools_condition(state)
@@ -221,6 +235,7 @@ def route_primary_assistant(
             return "enter_conceptual_assistant"
         elif tool_calls[0]["name"] == toFeedbackAssistant.__name__:
             return "enter_feedback_assistant"
+        return "tools"
     raise ValueError("Invalid route")
 
 def route_to_workflow(
@@ -283,12 +298,18 @@ graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback as
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 
+tools=[extract_problem_info]
+tool_node=ToolNode(tools)
+graph_builder.add_node("tools", tool_node)
+graph_builder.add_edge("tools","primary_assistant")
+
 graph_builder.add_conditional_edges(
     "primary_assistant",
     route_primary_assistant,
     {
         "enter_conceptual_assistant": "enter_conceptual_assistant",
         "enter_feedback_assistant": "enter_feedback_assistant",
+        "tools":"tools",
         END: END,
     },
 )
@@ -298,7 +319,7 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":10}}
+config={"configurable":{"thread_id":11234}}
 lista=["quiero que me expliques condicionales ", "ahora ciclos"]
 # for i in lista:
 #     async for event in graph.astream_events({"messages": ("user", i),"level":2},config,version="v1"):

@@ -1,13 +1,18 @@
+import os
 import pymysql.cursors
+
+HOST = os.getenv('DB_HOST')
+USER = os.getenv('DB_USER')
+PASSWORD = os.getenv('DB_PASSWORD')
 
 # Connect to the database
 def fetch_data(query):
     connection = None
     try:
         connection = pymysql.connect(
-            host='localhost',
-            user='root',
-            password='password',
+            host=HOST,
+            user=USER,
+            password=PASSWORD,
             database='calificador_anonimo',
             cursorclass=pymysql.cursors.DictCursor
         )

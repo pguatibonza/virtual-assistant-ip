@@ -28,13 +28,12 @@ import logging
 import os
 from backend import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
-from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info
+from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 #import load_data
 #from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
 #from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
 
 #Inicialización variables
-load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT=os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -52,7 +51,7 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-feedback_agent=prompt | chat.bind_tools([CompleteOrEscalate])
+feedback_agent= prompt | chat.bind_tools([CompleteOrEscalate])
 
 descripcion="""
 
@@ -129,11 +128,10 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
     ]
 )
 
-main_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info])
+main_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
 
 
 #Utilities
-
 
 def create_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
     def entry_node(state: State) -> dict:
@@ -185,7 +183,6 @@ memory = MemorySaver()
 
 async def senecode_assistant(state:State):
     message=state['messages'][-2]
-    print(message)
     if message.tool_calls:
         if message.tool_calls[0]["name"]== toFeedbackAssistant.__name__:
             state["problem_description"]=message.tool_calls[0]["args"]['problem_description']
@@ -198,6 +195,7 @@ async def senecode_assistant(state:State):
     {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
 
     return {"messages": [message],"problem_description":state["problem_description"]}
+
 async def conceptual_assistant(state:State):
     if state['messages'][-2].tool_calls:
         user_input=state['messages'][-2].tool_calls[0]['args']['request']
@@ -298,7 +296,7 @@ graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback as
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 
-tools=[extract_problem_info]
+tools=[extract_problem_info, find_problem_name]
 tool_node=ToolNode(tools)
 graph_builder.add_node("tools", tool_node)
 graph_builder.add_edge("tools","primary_assistant")

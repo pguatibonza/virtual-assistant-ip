@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -28,6 +28,11 @@ class toFeedbackAssistant(BaseModel):
     """
     code : str=Field(description="The code block which the student wants to get feedback from")
     problem_description : str=Field(description="The detailed problem the student wants to get feedback from")
+class AssistantName(BaseModel):
+    """Identify the agent """
+
+    found: Literal["primary_assistant","conceptual_assistant","feedback_assistant"] = Field(description="Name of the assistant to redirect")
+    
 class ProblemName(BaseModel):
     """Joke to tell user."""
 

@@ -27,8 +27,8 @@ from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
-from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
-from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
+from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ROUTER_AGENT_PROMPT
+from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
 # from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
 # from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
@@ -80,7 +80,19 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
     ]
 )
 
-main_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
+primary_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
+
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+
+
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", ROUTER_AGENT_PROMPT),
+        ("placeholder","{messages}")
+    ]
+)
+
+router_agent= prompt | chat.with_structured_output(AssistantName)
 
 
 #Utilities
@@ -117,7 +129,7 @@ class State(TypedDict):
     dialog_state : Annotated[
         list[
             Literal[
-                "main_assistant",
+                "primary_assistant",
                 "feedback_assistant",
                 "conceptual_assistant"
             ]
@@ -161,9 +173,15 @@ async def conceptual_assistant(state:State):
     response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
     return {"messages": [response]}
 
-async def primary_assistant(state:State):
-    user_input=state['messages'][-1]
-    message= await main_assistant.ainvoke({"user_input":user_input,"messages":state['messages']})
+
+
+async def main_assistant(state:State):
+    last_message=state['messages'][-1]
+    
+    if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
+        last_message=state['messages'][-3]
+    user_input=last_message.content
+    message= await primary_assistant.ainvoke({"user_input":user_input,"messages":state['messages']})
     
     
     return {"messages":[message],"user_input": user_input }
@@ -188,7 +206,7 @@ def route_primary_assistant(
         return "tools"
     raise ValueError("Invalid route")
 
-def route_to_workflow(
+async def route_to_workflow(
     state: State,
 ) -> Literal[
     "primary_assistant",
@@ -196,10 +214,15 @@ def route_to_workflow(
     "feedback_assistant",
 ]:
     """If we are in a delegated state, route directly to the appropriate assistant."""
+
     dialog_state = state.get("dialog_state")
     if not dialog_state:
         return "primary_assistant"
-    return dialog_state[-1]
+    
+    last_message=state['messages'][-1]
+    response= await router_agent.ainvoke({"user_input":last_message,"messages":state["messages"]})
+
+    return response.found
 #Por el momento se usara uno en conjunto apra feedback y conceptual
 def route_assistants(
     state: State,
@@ -217,7 +240,7 @@ def route_assistants(
 
 # This node will be shared for exiting all specialized assistants
 def pop_dialog_state(state: State) -> dict:
-    """Pop the dialog stack and return to the main assistant.
+    """Pop the dialog stack and return to the primary assistant.
 
     This lets the full graph explicitly track the dialog flow and delegate control
     to specific sub-graphs.
@@ -238,7 +261,7 @@ def pop_dialog_state(state: State) -> dict:
 
 
 graph_builder.add_conditional_edges(START,route_to_workflow)
-graph_builder.add_node("primary_assistant",primary_assistant)
+graph_builder.add_node("primary_assistant",main_assistant)
 
 graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptual Programming assistant","conceptual_assistant"))
 graph_builder.add_node("conceptual_assistant",conceptual_assistant)

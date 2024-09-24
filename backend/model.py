@@ -29,9 +29,9 @@ import os
 from backend import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
 from backend.tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
-#import load_data
-#from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
-#from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant
+# import load_data
+# from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+# from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
 
 #Inicialización variables
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -53,54 +53,6 @@ prompt = ChatPromptTemplate.from_messages(
 
 feedback_agent= prompt | chat.bind_tools([CompleteOrEscalate])
 
-descripcion="""
-
-En una estación de Transmilenio los operarios usan una fórmula matemática sencilla para saber si deben o no despachar un bus nuevo. Para esto tienen un contador de pasajeros en el bus entrante (personas_bus) y un contador de personas paradas en la plataforma (personas_estacion).
-
-Los operarios saben que la capacidad teórica máxima del bus es de 150 personas. Sin embargo, también saben que si se aprietan pueden transportar a máximo 200 personas. Los pasajeros no quieren viajar incómodos pero tampoco quieren demorarse mucho tomando el bus, así que sólo se montarán a un bus con sobrecupo que llegue a la estación si hay 40 o más personas en la plataforma. Luego de que el bus se detenga y entren las personas, los operarios decidirán si deben enviar un bus adicional: enviarán un bus nuevo, si al salir de la estación el bus quedó con sobrecupo o si en la plataforma quedaron 50 o más personas.
-
-Su trabajo es construir una función en Python que le ayude a los operarios de Transmilenio a tomar la decisión de despachar o no un bus nuevo.
-
-"""
-
-parametros=[
-    {"nombre" : "personas_bus", "tipo" : "int", "descripcion" : "Numero de personas en el bus que va a detenerse"},
-    {"nombre" : "personas_estacion", "tipo" : "int", "descripcion" : "Numero de personas esperando el bus de la estación"} 
-]
-
-retorno={"tipo":"bool", "descripcion": "Retorna el valor True si se debe despachar un bus nuevo y retorna False de lo contrario."}
-
-primitivas=[{"nombre":"for" ,"descripcion":"No deberia usar la primitiva for para resolver este problema", "nombre" : "while", "descripcion": "No deberia usar la primitiva while para resolver este problema"}]
-
-
-
-#solucion="cual es el modelo que estas usando"
-solucion2="""
-def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
-    despachar_bus = False
-    sobrecupo = personas_bus > 150
-    if sobrecupo and personas_estacion >= 40:
-      despachar_bus = True
-      
-    capacidad = 200 - personas_bus
-    
-    if capacidad < personas_estacion:
-      personas_estacion -= capacidad
-      personas_bus += capacidad
-    else:
-      personas_bus += personas_estacion
-      personas_estacion = 0
-    if personas_bus > 150 or personas_estacion >=50:
-      despachar_bus = True
-      
-    return despachar_bus
-"""
-solucion1="""
-def despacho_buses(personas_bus: int, personas_estacion: int)->bool:
-
-    # Definimos las constantes
-    return True
-"""
 
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
 

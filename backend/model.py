@@ -126,6 +126,7 @@ def update_dialog_stack(left: list[str], right: Optional[str]) -> list[str]:
 
 class State(TypedDict):
     messages:Annotated[list,add_messages]
+    user_input : str
     dialog_state : Annotated[
         list[
             Literal[
@@ -161,10 +162,7 @@ async def senecode_assistant(state:State):
     return {"messages": [message],"problem_description":state["problem_description"]}
 
 async def conceptual_assistant(state:State):
-    if state['messages'][-2].tool_calls:
-        user_input=state['messages'][-2].tool_calls[0]['args']['request']
-    else :
-        user_input = state['messages'][-1].content
+    user_input = state['user_input']
 
     #Extrae contexto segun el query
     context= await retriever.ainvoke(user_input)
@@ -176,15 +174,12 @@ async def conceptual_assistant(state:State):
 
 
 async def main_assistant(state:State):
-    last_message=state['messages'][-1]
-    
-    if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
-        last_message=state['messages'][-3]
-    user_input=last_message.content
-    message= await primary_assistant.ainvoke({"user_input":user_input,"messages":state['messages']})
+
+
+    message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
     
     
-    return {"messages":[message],"user_input": user_input }
+    return {"messages":[message] }
 
 def route_primary_assistant(
     state: State,
@@ -215,12 +210,9 @@ async def route_to_workflow(
 ]:
     """If we are in a delegated state, route directly to the appropriate assistant."""
 
-    dialog_state = state.get("dialog_state")
-    if not dialog_state:
-        return "primary_assistant"
     
     last_message=state['messages'][-1]
-    response= await router_agent.ainvoke({"user_input":last_message,"messages":state["messages"]})
+    response= await router_agent.ainvoke({"user_input":state['user_input'],"messages":state["messages"]})
 
     return response.found
 #Por el momento se usara uno en conjunto apra feedback y conceptual

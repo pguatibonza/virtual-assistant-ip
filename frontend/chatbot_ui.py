@@ -17,10 +17,10 @@ async def app():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("¿En qué podemos ayudarte hoy?"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    if user_input := st.chat_input("¿En qué podemos ayudarte hoy?"):
+        st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(user_input)
 
         # Define the config variable
         config = {"configurable": {"thread_id": "1"}}
@@ -29,7 +29,7 @@ async def app():
             response = ""
             message_placeholder = st.empty()  # Create a placeholder to update the response
             
-            async for event in graph.astream_events({"messages": ("user", prompt), "level": 2}, config, version="v1"):
+            async for event in graph.astream_events({"messages": ("user", user_input), "level": 2,"user_input" : user_input}, config, version="v1"):
                 kind=event["event"]
                 if kind=="on_chat_model_stream":
                     content=event["data"]["chunk"].content

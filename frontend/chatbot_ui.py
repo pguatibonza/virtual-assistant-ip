@@ -4,6 +4,11 @@ import random
 import time
 import asyncio
 
+def disable():
+    st.session_state["disabled"] = True
+    
+def enable():
+    st.session_state["disabled"] = False
 
 async def app():
 
@@ -11,13 +16,15 @@ async def app():
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "disabled" not in st.session_state:
+        st.session_state.disabled = False
         
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if user_input := st.chat_input("¿En qué podemos ayudarte hoy?"):
+    if user_input := st.chat_input("¿En qué podemos ayudarte hoy?", on_submit=disable, disabled=st.session_state.disabled):
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
@@ -39,3 +46,5 @@ async def app():
                     
                     
         st.session_state.messages.append({"role": "assistant", "content": response})
+        enable()
+        st.rerun()

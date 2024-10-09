@@ -27,7 +27,7 @@ from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
-from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ROUTER_AGENT_PROMPT
+from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT
 from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
 # from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
@@ -51,7 +51,7 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-feedback_agent= prompt | chat.bind_tools([CompleteOrEscalate])
+feedback_agent= prompt | chat
 
 
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
@@ -64,7 +64,7 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-conceptual_agent=prompt|chat.bind_tools([CompleteOrEscalate])
+conceptual_agent=prompt|chat
 
 
 #Main assistant 
@@ -87,12 +87,13 @@ chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
 
 prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", ROUTER_AGENT_PROMPT),
-        ("placeholder","{messages}")
+        ("system", ASSISTANT_ROUTER_PROMPT),
+        ("placeholder","{messages}"),
+        ("human","{user_input}")
     ]
 )
 
-router_agent= prompt | chat.with_structured_output(AssistantName)
+router_agent= prompt | chat.bind_tools([CompleteOrEscalate])
 
 
 #Utilities
@@ -155,30 +156,40 @@ async def senecode_assistant(state:State):
     else :
         state["user_input"]=state["messages"][-1]
         state["problem_description"]=state.get("problem_description")
-        
-    message=await feedback_agent.ainvoke(
-    {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
 
-    return {"messages": [message],"problem_description":state["problem_description"]}
+    #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
+    message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"}) 
+    
+    if message.tool_calls:
+        return {"messages":[message]}
+    else :
+        message=await feedback_agent.ainvoke(
+        {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
+
+        return {"messages" : [message], "problem_description": state["problem_description"]}
+
 
 async def conceptual_assistant(state:State):
     user_input = state['user_input']
 
-    #Extrae contexto segun el query
-    context= await retriever.ainvoke(user_input)
+    #Identifica si el input del usuario lo puede responder el conceptual assistant o lo redirecciona
+    message = router_agent.invoke({"user_input":user_input, "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
+    if message.tool_calls:
+        return {"messages" : [message]}
+    else : 
 
-    #Responde de acuerdo al contexto
-    response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
-    return {"messages": [response]}
+        #Extrae contexto segun el query
+        context= await retriever.ainvoke(user_input)
+
+        #Responde de acuerdo al contexto
+        response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
+        return {"messages": [response]}
 
 
 
 async def main_assistant(state:State):
 
-
     message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
-    
-    
     return {"messages":[message] }
 
 def route_primary_assistant(
@@ -211,10 +222,10 @@ async def route_to_workflow(
     """If we are in a delegated state, route directly to the appropriate assistant."""
 
     
-    last_message=state['messages'][-1]
-    response= await router_agent.ainvoke({"user_input":state['user_input'],"messages":state["messages"]})
-
-    return response.found
+    dialog_state = state.get("dialog_state")
+    if not dialog_state:
+        return "primary_assistant"
+    return dialog_state[-1]
 #Por el momento se usara uno en conjunto apra feedback y conceptual
 def route_assistants(
     state: State,

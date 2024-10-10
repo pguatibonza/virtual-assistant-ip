@@ -143,7 +143,6 @@ class State(TypedDict):
 
 
 graph_builder=StateGraph(State)
-#memory = SqliteSaver.from_conn_string(":memory:")
 memory = MemorySaver()
 
 
@@ -295,15 +294,3 @@ graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 
 graph = graph_builder.compile(checkpointer=memory)
-config={"configurable":{"thread_id":11234}}
-lista=["quiero que me expliques condicionales ", "ahora ciclos"]
-# for i in lista:
-#     async for event in graph.astream_events({"messages": ("user", i),"level":2},config,version="v1"):
-#         kind=event["event"]
-#         if kind=="on_chat_model_stream":
-#             content=event["data"]["chunk"].content
-#             if content:
-#                 print(content, end='')
-
-
-

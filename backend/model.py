@@ -179,7 +179,7 @@ async def conceptual_assistant(state:State):
     else : 
 
         #Extrae contexto segun el query
-        context= await retriever.invoke(user_input)
+        context= retriever.invoke(user_input)
 
         #Responde de acuerdo al contexto
         response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})

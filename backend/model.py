@@ -203,23 +203,59 @@ To do this, rewrite the following to remove any code blocks so that the response
 [original response to be rewritten]: {assistant_answer}
 """
 
-revision_prompt = ChatPromptTemplate.from_messages(
+feedback_revision_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", prompt),
         ("placeholder", "{messages}"),
     ]
 )
 
-revision_agent = revision_prompt | chat
+feedback_revision_agent = feedback_revision_prompt | chat
 
-async def revise_answer_to_user(state: State) -> dict:
+async def revise_feedback_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
     """
     message = state["messages"][-1]
     if message.tool_calls:
         return {"messages": [message]}
-    response = await revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
+    response = await feedback_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
+    # Update the response message with the last message ID
+    new_message = AIMessage(
+    content=response.content,
+    # Important! The ID is how LangGraph knows to REPLACE the message in the state rather than APPEND this messages
+    id=message.id,
+    )
+    return {"messages": [new_message]}
+
+# Revise answer before sending it to the user
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
+
+prompt = """
+The following was written to help a student in a CS class. 
+However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
+Keep the code blocks that explain programming concepts in general.
+If a code block gives a specific problem solution to a user problem, remove it.
+[original response to be rewritten]: {assistant_answer}
+"""
+
+conceptual_revision_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompt),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+conceptual_revision_agent = conceptual_revision_prompt | chat
+
+async def revise_conceptual_answer_to_user(state: State) -> dict:
+    """Revise the answer to the user.
+    The answer cannot contain code snippets.
+    """
+    message = state["messages"][-1]
+    if message.tool_calls:
+        return {"messages": [message]}
+    response = await conceptual_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
     # Update the response message with the last message ID
     new_message = AIMessage(
     content=response.content,
@@ -234,11 +270,11 @@ def route_primary_assistant(
     "enter_conceptual_assistant",
     "enter_feedback_assistant",
     "tools",
-    "revise_answer"
+    "revise_feedback_answer"
 ]:
     route = tools_condition(state)
     if route == END:
-        return "revise_answer"
+        return "revise_feedback_answer"
     tool_calls = state["messages"][-1].tool_calls
     if tool_calls:
         if tool_calls[0]["name"] == toConceptualAssistant.__name__:
@@ -265,11 +301,26 @@ async def route_to_workflow(
 
 
 #Por el momento se usara uno en conjunto apra feedback y conceptual
-def route_assistants(
+def route_feedback_assistant(
     state: State,
 ) -> Literal[
     "leave_skill",
-    "revise_answer",
+    "revise_feedback_answer",
+]:
+    route = tools_condition(state)
+    if route == END:
+        return "revise_answer"
+    tool_calls = state["messages"][-1].tool_calls
+    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+    if did_cancel:
+        return "leave_skill"
+    
+#Por el momento se usara uno en conjunto apra feedback y conceptual
+def route_conceptual_assistant(
+    state: State,
+) -> Literal[
+    "leave_skill",
+    "revise_conceptual_answer",
 ]:
     route = tools_condition(state)
     if route == END:
@@ -314,8 +365,12 @@ graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 
 # Add revision node
-graph_builder.add_node("revise_answer", revise_answer_to_user)
-graph_builder.add_edge("revise_answer", END)
+graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
+graph_builder.add_edge("revise_feedback_answer", END)
+
+# Add conceptual revision node
+graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_user)
+graph_builder.add_edge("revise_conceptual_answer", END)
 
 
 tools=[extract_problem_info, find_problem_name]
@@ -330,11 +385,11 @@ graph_builder.add_conditional_edges(
         "enter_conceptual_assistant": "enter_conceptual_assistant",
         "enter_feedback_assistant": "enter_feedback_assistant",
         "tools":"tools",
-        "revise_answer": "revise_answer"
+        "revise_feedback_answer": "revise_feedback_answer"
     },
 )
-graph_builder.add_conditional_edges("conceptual_assistant", route_assistants)
-graph_builder.add_conditional_edges("feedback_assistant",route_assistants)
+graph_builder.add_conditional_edges("conceptual_assistant", route_conceptual_assistant)
+graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 

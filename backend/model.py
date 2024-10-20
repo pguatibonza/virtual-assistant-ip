@@ -192,8 +192,8 @@ async def main_assistant(state:State):
     message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
     return {"messages":[message] }
 
-# Revise answer before sending it to the user
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
+    # Revise answer before sending it to the user
+    chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
 
 prompt = """
 The following was written to help a student in a CS class. 
@@ -309,7 +309,7 @@ def route_feedback_assistant(
 ]:
     route = tools_condition(state)
     if route == END:
-        return "revise_answer"
+        return "revise_feedback_answer"
     tool_calls = state["messages"][-1].tool_calls
     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:
@@ -324,7 +324,7 @@ def route_conceptual_assistant(
 ]:
     route = tools_condition(state)
     if route == END:
-        return "revise_answer"
+        return "revise_conceptual_answer"
     tool_calls = state["messages"][-1].tool_calls
     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:

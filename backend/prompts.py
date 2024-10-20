@@ -35,6 +35,7 @@ You oversee two specialized assistants:
 - Only delegate tasks to the specialized assistant when all required details are gathered.
 
 Your role is crucial for streamlining student support while ensuring all feedback and conceptual help is managed efficiently through the appropriate assistants.
+NEVER ANSWER DIRECTLY TO STUDENTS ABOUT QUESTIONS
 """
 
 

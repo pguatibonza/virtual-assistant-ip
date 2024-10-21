@@ -41,7 +41,8 @@ OPENAI_API_VERSION=os.getenv("OPENAI_API_VERSION")
 
 vector_store=load_data.load_vector_store()
 retriever=vector_store.as_retriever(search_kwargs={"k":1})
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
+
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=False)
 
 
 prompt = ChatPromptTemplate.from_messages(
@@ -82,7 +83,7 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
 
 primary_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=False)
 
 
 prompt = ChatPromptTemplate.from_messages(
@@ -133,12 +134,12 @@ class State(TypedDict):
             Literal[
                 "primary_assistant",
                 "feedback_assistant",
-                "conceptual_assistant"
+                "conceptual_assistant",
+                "revise_answer"
             ]
         ],update_dialog_stack
     ]
     level : str
-    stream_message :Any
     problem_description : str
 
 
@@ -162,10 +163,10 @@ async def senecode_assistant(state:State):
     if message.tool_calls:
         return {"messages":[message]}
     else :
-        message=await feedback_agent.ainvoke(
+        feedback_message= feedback_agent.invoke(
         {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
-
-        return {"messages" : [message], "problem_description": state["problem_description"]}
+        
+        return {"messages" : [feedback_message], "problem_description": state["problem_description"]}
 
 
 async def conceptual_assistant(state:State):
@@ -178,7 +179,7 @@ async def conceptual_assistant(state:State):
     else : 
 
         #Extrae contexto segun el query
-        context= await retriever.ainvoke(user_input)
+        context= retriever.invoke(user_input)
 
         #Responde de acuerdo al contexto
         response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
@@ -191,17 +192,89 @@ async def main_assistant(state:State):
     message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
     return {"messages":[message] }
 
+    # Revise answer before sending it to the user
+    chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
+
+prompt = """
+The following was written to help a student in a CS class. 
+However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
+We need to provide help without including example code. 
+To do this, rewrite the following to remove any code blocks so that the response explains what the student should do but does not provide solution code.
+[original response to be rewritten]: {assistant_answer}
+"""
+
+feedback_revision_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompt),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+feedback_revision_agent = feedback_revision_prompt | chat
+
+async def revise_feedback_answer_to_user(state: State) -> dict:
+    """Revise the answer to the user.
+    The answer cannot contain code snippets.
+    """
+    message = state["messages"][-1]
+    if message.tool_calls:
+        return {"messages": [message]}
+    response = await feedback_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
+    # Update the response message with the last message ID
+    new_message = AIMessage(
+    content=response.content,
+    # Important! The ID is how LangGraph knows to REPLACE the message in the state rather than APPEND this messages
+    id=message.id,
+    )
+    return {"messages": [new_message]}
+
+# Revise answer before sending it to the user
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
+
+prompt = """
+The following was written to help a student in a CS class. 
+However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
+Keep the code blocks that explain programming concepts in general.
+If a code block gives a specific problem solution to a user problem, remove it.
+[original response to be rewritten]: {assistant_answer}
+"""
+
+conceptual_revision_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompt),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+conceptual_revision_agent = conceptual_revision_prompt | chat
+
+async def revise_conceptual_answer_to_user(state: State) -> dict:
+    """Revise the answer to the user.
+    The answer cannot contain code snippets.
+    """
+    message = state["messages"][-1]
+    if message.tool_calls:
+        return {"messages": [message]}
+    response = await conceptual_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
+    # Update the response message with the last message ID
+    new_message = AIMessage(
+    content=response.content,
+    # Important! The ID is how LangGraph knows to REPLACE the message in the state rather than APPEND this messages
+    id=message.id,
+    )
+    return {"messages": [new_message]}
+
 def route_primary_assistant(
     state: State,
 ) -> Literal[
     "enter_conceptual_assistant",
     "enter_feedback_assistant",
     "tools",
-    "__end__",
+    "revise_feedback_answer"
 ]:
     route = tools_condition(state)
     if route == END:
-        return END
+        return "revise_feedback_answer"
     tool_calls = state["messages"][-1].tool_calls
     if tool_calls:
         if tool_calls[0]["name"] == toConceptualAssistant.__name__:
@@ -225,16 +298,33 @@ async def route_to_workflow(
     if not dialog_state:
         return "primary_assistant"
     return dialog_state[-1]
+
+
 #Por el momento se usara uno en conjunto apra feedback y conceptual
-def route_assistants(
+def route_feedback_assistant(
     state: State,
 ) -> Literal[
     "leave_skill",
-    "__end__",
+    "revise_feedback_answer",
 ]:
     route = tools_condition(state)
     if route == END:
-        return END
+        return "revise_feedback_answer"
+    tool_calls = state["messages"][-1].tool_calls
+    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+    if did_cancel:
+        return "leave_skill"
+    
+#Por el momento se usara uno en conjunto apra feedback y conceptual
+def route_conceptual_assistant(
+    state: State,
+) -> Literal[
+    "leave_skill",
+    "revise_conceptual_answer",
+]:
+    route = tools_condition(state)
+    if route == END:
+        return "revise_conceptual_answer"
     tool_calls = state["messages"][-1].tool_calls
     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:
@@ -250,6 +340,7 @@ def pop_dialog_state(state: State) -> dict:
     messages = []
     if state["messages"][-1].tool_calls:
         # Note: Doesn't currently handle the edge case where the llm performs parallel tool calls
+        # TODO: Handle parallel tool calls
         messages.append(
             ToolMessage(
                 content="Resuming dialog with the host assistant. Please reflect on the past conversation and assist the student as needed.",
@@ -273,6 +364,15 @@ graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback as
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 
+# Add revision node
+graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
+graph_builder.add_edge("revise_feedback_answer", END)
+
+# Add conceptual revision node
+graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_user)
+graph_builder.add_edge("revise_conceptual_answer", END)
+
+
 tools=[extract_problem_info, find_problem_name]
 tool_node=ToolNode(tools)
 graph_builder.add_node("tools", tool_node)
@@ -285,11 +385,11 @@ graph_builder.add_conditional_edges(
         "enter_conceptual_assistant": "enter_conceptual_assistant",
         "enter_feedback_assistant": "enter_feedback_assistant",
         "tools":"tools",
-        END: END,
+        "revise_feedback_answer": "revise_feedback_answer"
     },
 )
-graph_builder.add_conditional_edges("conceptual_assistant", route_assistants)
-graph_builder.add_conditional_edges("feedback_assistant",route_assistants)
+graph_builder.add_conditional_edges("conceptual_assistant", route_conceptual_assistant)
+graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")
 

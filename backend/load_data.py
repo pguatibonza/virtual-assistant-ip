@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PDFMinerLoader
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from supabase import create_client, Client
 from langchain_community.vectorstores import SupabaseVectorStore
@@ -18,7 +18,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TABLE_NAME=os.getenv("TABLE_NAME")
 
-embeddings=OpenAIEmbeddings()
+embeddings= AzureOpenAIEmbeddings(azure_deployment="gpt4-embedding-ada-002")
 # Crear cliente de Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 print(f"Supabase client initialized: {supabase}")

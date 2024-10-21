@@ -27,14 +27,14 @@ class toFeedbackAssistant(BaseModel):
     It also answers questions about the code and helps the student to understand the problem
     """
     code : str=Field(description="The code block which the student wants to get feedback from")
-    problem_description : str=Field(description="The detailed problem the student wants to get feedback from")
+    problem_description : str=Field(description="The detailed problem description the student wants to get feedback from")
 class AssistantName(BaseModel):
     """Identify the agent """
 
     found: Literal["primary_assistant","conceptual_assistant","feedback_assistant"] = Field(description="Name of the assistant to redirect")
     
 class ProblemName(BaseModel):
-    """Joke to tell user."""
+    """Identify the problem name """
 
     found: bool = Field(description="Whether the problem was found or not")
     problem_list: list[str] = Field(description="List of problems found", default=[])
@@ -116,9 +116,15 @@ def extract_problem_info(problem_name):
                 primitives_str = "\n".join([f"name: {prim['nombre']} - description: {prim['descripcion']}" for prim in primitives])
             else:
                 primitives_str = "No primitives found"   
-            return f"""Problem description : {exercise['descripcion']} \n function_name :  {exercise['funcion']}\n parameter_description : {parameters_str}
-            return_description : {exercise['retorno_descripcion']} \n return_type : {exercise['retorno_tipo']} 
-            primitives_forbidden_description : {primitives_str}"""
+            return f"""
+                problem_name: {exercise['titulo']}\n
+                problem_description: {exercise['descripcion']}\n 
+                function_name: {exercise['funcion']}\n 
+                parameter_description: {parameters_str}\n
+                return_description: {exercise['retorno_descripcion']}\n
+                return_type : {exercise['retorno_tipo']}\n
+                primitives_forbidden_description : {primitives_str}
+                """
         except Exception as e:
             return "Error retrieving problem"
     else: 

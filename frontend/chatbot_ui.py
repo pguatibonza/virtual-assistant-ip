@@ -38,7 +38,8 @@ async def app():
             
             async for event in graph.astream_events({"messages": ("user", user_input), "level": 2,"user_input" : user_input}, config, version="v1"):
                 kind=event["event"]
-                if kind=="on_chat_model_stream":
+                # Check if the event comes from the 'revise_answer' node
+                if kind=="on_chat_model_stream" and event["metadata"]["langgraph_node"] in ["revise_feedback_answer","revise_conceptual_answer"]:
                     content=event["data"]["chunk"].content
                     if content:
                         response += content

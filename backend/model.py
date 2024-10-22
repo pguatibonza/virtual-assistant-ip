@@ -27,7 +27,7 @@ from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
-from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT
+from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
 # from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
@@ -83,8 +83,10 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
 
 primary_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=False)
 
+#Route agents
+
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=False)
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -96,6 +98,27 @@ prompt = ChatPromptTemplate.from_messages(
 
 router_agent= prompt | chat.bind_tools([CompleteOrEscalate])
 
+# Feedback revision answer
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", FEEDBACK_REVISION_PROMPT),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+feedback_revision_agent = prompt | chat
+
+
+#Conceptual revision answer
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", CONCEPTUAL_REVISION_PROMPT),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+conceptual_revision_agent = prompt | chat
+
 
 #Utilities
 
@@ -105,10 +128,7 @@ def create_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
         return {
             "messages": [
                 ToolMessage(
-                    content=f"The assistant is now the {assistant_name}. Reflect on the above conversation between the host assistant and the user."
-                    f" The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are {assistant_name},"
-                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
-                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    content=f"The assistant is now the {assistant_name}. Reflect on the above conversation between the host assistant and the user.",
                     tool_call_id=tool_call_id,
                 )
             ],
@@ -192,25 +212,6 @@ async def main_assistant(state:State):
     message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
     return {"messages":[message] }
 
-    # Revise answer before sending it to the user
-    chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
-
-prompt = """
-The following was written to help a student in a CS class. 
-However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
-We need to provide help without including example code. 
-To do this, rewrite the following to remove any code blocks so that the response explains what the student should do but does not provide solution code.
-[original response to be rewritten]: {assistant_answer}
-"""
-
-feedback_revision_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", prompt),
-        ("placeholder", "{messages}"),
-    ]
-)
-
-feedback_revision_agent = feedback_revision_prompt | chat
 
 async def revise_feedback_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
@@ -229,24 +230,7 @@ async def revise_feedback_answer_to_user(state: State) -> dict:
     return {"messages": [new_message]}
 
 # Revise answer before sending it to the user
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
 
-prompt = """
-The following was written to help a student in a CS class. 
-However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
-Keep the code blocks that explain programming concepts in general.
-If a code block gives a specific problem solution to a user problem, remove it.
-[original response to be rewritten]: {assistant_answer}
-"""
-
-conceptual_revision_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", prompt),
-        ("placeholder", "{messages}"),
-    ]
-)
-
-conceptual_revision_agent = conceptual_revision_prompt | chat
 
 async def revise_conceptual_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
@@ -373,21 +357,10 @@ graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_u
 graph_builder.add_edge("revise_conceptual_answer", END)
 
 
-tools=[extract_problem_info, find_problem_name]
-tool_node=ToolNode(tools)
-graph_builder.add_node("tools", tool_node)
+graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_name]))
 graph_builder.add_edge("tools","primary_assistant")
 
-graph_builder.add_conditional_edges(
-    "primary_assistant",
-    route_primary_assistant,
-    {
-        "enter_conceptual_assistant": "enter_conceptual_assistant",
-        "enter_feedback_assistant": "enter_feedback_assistant",
-        "tools":"tools",
-        "revise_feedback_answer": "revise_feedback_answer"
-    },
-)
+graph_builder.add_conditional_edges("primary_assistant",route_primary_assistant,)
 graph_builder.add_conditional_edges("conceptual_assistant", route_conceptual_assistant)
 graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)

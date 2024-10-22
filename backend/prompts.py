@@ -137,19 +137,19 @@ Your task is to evaluate the input provided by the student and decide if it pert
 {assistant_name}
 """
 
-
-
-
-
-QUESTION_REWRITER_PROMPT = """
-Eres un reformulador de preguntas que convierte una pregunta de entrada en una versión mejorada, optimizada para la búsqueda en una vector store. 
-Observa la entrada y trata de razonar sobre la intención o significado semántico subyacente. La vector store trata tema sobre introducción a la programación.
-En algunas ocasiones el estudiante hará follow-up questions, por lo que debes reformularla basado en los mensajes anteriores para que pueda entrar a la vector store.
-Debes ser simple y conciso.
-
-La pregunta es : {user_input}
+FEEDBACK_REVISION_PROMPT = """
+The following was written to help a student in a CS class. 
+However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
+We need to provide help without including example code. 
+To do this, rewrite the following to remove any code blocks so that the response explains what the student should do but does not provide solution code.
+[original response to be rewritten]: {assistant_answer}
 """
 
-FEEDBACK_TOOL_PROMPT="""
-You are an specialized teaching assistant o
+
+CONCEPTUAL_REVISION_PROMPT= """
+The following was written to help a student in a CS class. 
+However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
+Keep the code blocks that explain programming concepts in general.
+If a code block gives a specific problem solution to a user problem, remove it.
+[original response to be rewritten]: {assistant_answer}
 """

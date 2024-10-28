@@ -9,10 +9,17 @@ def disable():
     
 def enable():
     st.session_state["disabled"] = False
-
+    
 async def app():
 
-    st.title("Asistente Virtual IP")
+    st.title("Bienvenido")
+    st.write("¡Hola! Haz preguntas relacionadas con los temas de la clase o pide ayuda con los ejercicios de Senecode. Estoy aquí para ayudarte.")
+    
+    st.sidebar.markdown("Acciones")
+    # Create a sidebar with a button to create a new chat
+    if st.sidebar.button("Nueva conversación", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.disabled = False    
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -36,7 +43,7 @@ async def app():
             response = ""
             message_placeholder = st.empty()  # Create a placeholder to update the response
             
-            async for event in graph.astream_events({"messages": ("user", user_input), "level": 2,"user_input" : user_input}, config, version="v1"):
+            async for event in graph.astream_events({"messages": ("user", user_input), "level": 2, "user_input" : user_input}, config, version="v1"):
                 kind=event["event"]
                 # Check if the event comes from the 'revise_answer' node
                 if kind=="on_chat_model_stream" and event["metadata"]["langgraph_node"] in ["revise_feedback_answer","revise_conceptual_answer"]:
@@ -44,6 +51,10 @@ async def app():
                     if content:
                         response += content
                         message_placeholder.markdown(response)
+                        
+            # # Get the current state of the conversation
+            # conversation_state = graph.get_state(config=config)
+            # st.session_state.current_state = conversation_state
                     
                     
         st.session_state.messages.append({"role": "assistant", "content": response})

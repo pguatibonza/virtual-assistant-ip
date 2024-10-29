@@ -30,7 +30,7 @@ from backend import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
-# from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+# from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 # from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
 
 #Inicialización variables
@@ -96,7 +96,7 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-router_agent= prompt | chat.bind_tools([CompleteOrEscalate])
+router_agent= prompt | chat.with_structured_output(CompleteOrEscalate)
 
 # Feedback revision answer
 prompt = ChatPromptTemplate.from_messages(
@@ -125,7 +125,10 @@ conceptual_revision_agent = prompt | chat
 def create_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
     def entry_node(state: State) -> dict:
         tool_call_id = state["messages"][-1].tool_calls[0]["id"]
-        return {
+        args = state["messages"][-1].tool_calls[0]["args"]
+
+        # Crear el diccionario de retorno con cada llave y valor de args
+        result_dict = {
             "messages": [
                 ToolMessage(
                     content=f"The assistant is now the {assistant_name}. Reflect on the above conversation between the host assistant and the user.",
@@ -135,7 +138,13 @@ def create_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
             "dialog_state": new_dialog_state,
         }
 
+        # Agregar cada par llave-valor de args al diccionario de retorno
+        result_dict.update(args)
+
+        return result_dict
+
     return entry_node
+
 #Graph
 def update_dialog_stack(left: list[str], right: Optional[str]) -> list[str]:
     """Push or pop the state."""
@@ -153,7 +162,7 @@ class State(TypedDict):
         list[
             Literal[
                 "primary_assistant",
-                "feedback_assistant",
+                "router_feedback_assistant",
                 "conceptual_assistant",
                 "revise_answer"
             ]
@@ -161,32 +170,23 @@ class State(TypedDict):
     ]
     level : str
     problem_description : str
+    escalated: bool
 
 
 graph_builder=StateGraph(State)
 memory = MemorySaver()
-
-
-async def senecode_assistant(state:State):
-    message=state['messages'][-2]
-    if message.tool_calls:
-        if message.tool_calls[0]["name"]== toFeedbackAssistant.__name__:
-            state["problem_description"]=message.tool_calls[0]["args"]['problem_description']
-            state["user_input"]=message.tool_calls[0]["args"]["code"]
-    else :
-        state["user_input"]=state["messages"][-1]
-        state["problem_description"]=state.get("problem_description")
+async def router_senecode_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
-    message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"}) 
-    
-    if message.tool_calls:
-        return {"messages":[message]}
-    else :
-        feedback_message= feedback_agent.invoke(
-        {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
+    message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"})  
+    return {"escalated": message.cancel, "problem_description":state.get("problem_description","")} 
+
+async def senecode_assistant(state:State):
+    user_input=state["user_input"]
+
+    feedback_message= feedback_agent.invoke({"problem_description":state["problem_description"], "user_input":user_input, "messages":state["messages"]})
         
-        return {"messages" : [feedback_message], "problem_description": state["problem_description"]}
+    return {"messages" : [feedback_message]}
 
 
 async def conceptual_assistant(state:State):
@@ -194,10 +194,9 @@ async def conceptual_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el conceptual assistant o lo redirecciona
     message = router_agent.invoke({"user_input":user_input, "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
-    if message.tool_calls:
+    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
         return {"messages" : [message]}
     else : 
-
         #Extrae contexto segun el query
         context= retriever.invoke(user_input)
 
@@ -218,7 +217,7 @@ async def revise_feedback_answer_to_user(state: State) -> dict:
     The answer cannot contain code snippets.
     """
     message = state["messages"][-1]
-    if message.tool_calls:
+    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
         return {"messages": [message]}
     response = await feedback_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
     # Update the response message with the last message ID
@@ -237,7 +236,7 @@ async def revise_conceptual_answer_to_user(state: State) -> dict:
     The answer cannot contain code snippets.
     """
     message = state["messages"][-1]
-    if message.tool_calls:
+    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
         return {"messages": [message]}
     response = await conceptual_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
     # Update the response message with the last message ID
@@ -273,7 +272,7 @@ async def route_to_workflow(
 ) -> Literal[
     "primary_assistant",
     "conceptual_assistant",
-    "feedback_assistant",
+    "router_feedback_assistant",
 ]:
     """If we are in a delegated state, route directly to the appropriate assistant."""
 
@@ -284,7 +283,12 @@ async def route_to_workflow(
     return dialog_state[-1]
 
 
-#Por el momento se usara uno en conjunto apra feedback y conceptual
+# Maneja los edges del nodo router feedback assistant
+def route_router_feedback_assistant(state:State):
+    if state["escalated"]:
+        return "leave_skill"
+    return "feedback_assistant"
+# Maneja los ejes del nodo feedback assistant  
 def route_feedback_assistant(
     state: State,
 ) -> Literal[
@@ -294,6 +298,8 @@ def route_feedback_assistant(
     route = tools_condition(state)
     if route == END:
         return "revise_feedback_answer"
+    
+    ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
     tool_calls = state["messages"][-1].tool_calls
     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:
@@ -322,13 +328,10 @@ def pop_dialog_state(state: State) -> dict:
     to specific sub-graphs.
     """
     messages = []
-    if state["messages"][-1].tool_calls:
-        # Note: Doesn't currently handle the edge case where the llm performs parallel tool calls
-        # TODO: Handle parallel tool calls
-        messages.append(
-            ToolMessage(
+
+    messages.append(
+            AIMessage(
                 content="Resuming dialog with the host assistant. Please reflect on the past conversation and assist the student as needed.",
-                tool_call_id=state["messages"][-1].tool_calls[0]["id"],
             )
         )
     return {
@@ -344,9 +347,11 @@ graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptua
 graph_builder.add_node("conceptual_assistant",conceptual_assistant)
 graph_builder.add_edge("enter_conceptual_assistant", "conceptual_assistant")
 
-graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","feedback_assistant"))
+graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","router_feedback_assistant"))
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
+graph_builder.add_node("router_feedback_assistant",router_senecode_assistant)
+graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant)
 
 # Add revision node
 graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)

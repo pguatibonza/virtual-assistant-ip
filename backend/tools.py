@@ -26,8 +26,8 @@ class toFeedbackAssistant(BaseModel):
     It helps to analize code and give feedback to the student
     It also answers questions about the code and helps the student to understand the problem
     """
-    code : str=Field(description="The code block which the student wants to get feedback from")
     problem_description : str=Field(description="The detailed problem description the student wants to get feedback from")
+    request :  str=Field(description="Any necessary follow-up questions the conceptual assistant  should clarify  before proceeding" )
 class AssistantName(BaseModel):
     """Identify the agent """
 

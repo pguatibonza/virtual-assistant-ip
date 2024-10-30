@@ -28,7 +28,7 @@ import logging
 import os
 from backend import load_data
 from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
-from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
+from backend.tools import AssistantName, ContinueOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
 # from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 # from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
@@ -76,7 +76,6 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
     [
         ("system",PRIMARY_ASSISTANT_PROMPT),
         ("placeholder","{messages}"),
-        ("human", " {user_input}" ),
         
     ]
 )
@@ -92,11 +91,10 @@ prompt = ChatPromptTemplate.from_messages(
     [
         ("system", ASSISTANT_ROUTER_PROMPT),
         ("placeholder","{messages}"),
-        ("human","{user_input}")
     ]
 )
 
-router_agent= prompt | chat.with_structured_output(CompleteOrEscalate)
+router_agent= prompt | chat.with_structured_output(ContinueOrEscalate)
 
 # Feedback revision answer
 prompt = ChatPromptTemplate.from_messages(
@@ -171,6 +169,7 @@ class State(TypedDict):
     level : str
     problem_description : str
     escalated: bool
+    user_request : str
 
 
 graph_builder=StateGraph(State)
@@ -179,7 +178,7 @@ async def router_senecode_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
     message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"})  
-    return {"escalated": message.cancel, "problem_description":state.get("problem_description","")} 
+    return {"escalated": message.proceed, "problem_description":state.get("problem_description",""),"user_request":message.request} 
 
 async def senecode_assistant(state:State):
     user_input=state["user_input"]
@@ -188,21 +187,22 @@ async def senecode_assistant(state:State):
         
     return {"messages" : [feedback_message]}
 
+async def router_conceptual_assistant(state : State):
+    #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
+    message = router_agent.invoke({"user_input":state["user_input"], "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
+    #Se almacena el request para usarlo como query en la vector db
+    return {"escalated": message.proceed,"user_request":message.request} 
 
 async def conceptual_assistant(state:State):
     user_input = state['user_input']
+    user_request = state["user_request"]
 
-    #Identifica si el input del usuario lo puede responder el conceptual assistant o lo redirecciona
-    message = router_agent.invoke({"user_input":user_input, "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
-    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
-        return {"messages" : [message]}
-    else : 
-        #Extrae contexto segun el query
-        context= retriever.invoke(user_input)
+    #Extrae contexto segun el query
+    context= retriever.invoke(user_request)
 
-        #Responde de acuerdo al contexto
-        response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
-        return {"messages": [response]}
+    #Responde de acuerdo al contexto
+    response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
+    return {"messages": [response]}
 
 
 
@@ -271,8 +271,8 @@ async def route_to_workflow(
     state: State,
 ) -> Literal[
     "primary_assistant",
-    "conceptual_assistant",
-    "router_feedback_assistant",
+    "conceptual",
+    "feedback",
 ]:
     """If we are in a delegated state, route directly to the appropriate assistant."""
 
@@ -285,7 +285,7 @@ async def route_to_workflow(
 
 # Maneja los edges del nodo router feedback assistant
 def route_router_feedback_assistant(state:State):
-    if state["escalated"]:
+    if not state["escalated"]:
         return "leave_skill"
     return "feedback_assistant"
 # Maneja los ejes del nodo feedback assistant  
@@ -301,24 +301,29 @@ def route_feedback_assistant(
     
     ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
     tool_calls = state["messages"][-1].tool_calls
-    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+    did_cancel = any(tc["name"] == ContinueOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:
         return "leave_skill"
-    
-#Por el momento se usara uno en conjunto apra feedback y conceptual
-def route_conceptual_assistant(
-    state: State,
-) -> Literal[
-    "leave_skill",
-    "revise_conceptual_answer",
-]:
-    route = tools_condition(state)
-    if route == END:
-        return "revise_conceptual_answer"
-    tool_calls = state["messages"][-1].tool_calls
-    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
-    if did_cancel:
+# Maneja los edges del nodo router conceptual assistant
+def route_router_conceptual_assistant(state:State):
+    if not state["escalated"]:
         return "leave_skill"
+    return "conceptual_assistant"
+ 
+# Con las modificaciones de router, solo es necesario que el conceptual vaya al revise answer, pues no hay mas nodos
+# def route_conceptual_assistant(
+#     state: State,
+# ) -> Literal[
+#     "leave_skill",
+#     "revise_conceptual_answer",
+# ]:
+#     route = tools_condition(state)
+#     if route == END:
+#         return "revise_conceptual_answer"
+#     tool_calls = state["messages"][-1].tool_calls
+#     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+#     if did_cancel:
+#         return "leave_skill"
 
 # This node will be shared for exiting all specialized assistants
 def pop_dialog_state(state: State) -> dict:
@@ -340,18 +345,24 @@ def pop_dialog_state(state: State) -> dict:
     }
 
 
-graph_builder.add_conditional_edges(START,route_to_workflow)
+graph_builder.add_conditional_edges(START,route_to_workflow,
+                                     
+                                    {"feedback" : "router_feedback_assistant" ,
+                                     "primary_assistant" : "primary_assistant" ,
+                                     "conceptual":"router_conceptual_assistant"} )
 graph_builder.add_node("primary_assistant",main_assistant)
 
-graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptual Programming assistant","conceptual_assistant"))
+graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptual Programming assistant","conceptual"))
 graph_builder.add_node("conceptual_assistant",conceptual_assistant)
 graph_builder.add_edge("enter_conceptual_assistant", "conceptual_assistant")
+graph_builder.add_node("router_conceptual_assistant",router_conceptual_assistant)
+graph_builder.add_conditional_edges("router_conceptual_assistant",route_router_conceptual_assistant )
 
-graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","router_feedback_assistant"))
+graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","feedback"))
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 graph_builder.add_node("router_feedback_assistant",router_senecode_assistant)
-graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant)
+graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant )
 
 # Add revision node
 graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
@@ -366,7 +377,7 @@ graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_nam
 graph_builder.add_edge("tools","primary_assistant")
 
 graph_builder.add_conditional_edges("primary_assistant",route_primary_assistant,)
-graph_builder.add_conditional_edges("conceptual_assistant", route_conceptual_assistant)
+graph_builder.add_edge("conceptual_assistant", "revise_conceptual_answer")
 graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")

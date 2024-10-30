@@ -7,12 +7,12 @@ from langchain_core.tools import tool
 from backend.db_connection import fetch_data
 # from db_connection import fetch_data
 
-class CompleteOrEscalate(BaseModel):
-    """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
-    who can re-route the dialog based on the student's needs."""
+class ContinueOrEscalate(BaseModel):
 
-    cancel: bool =True
+
+    proceed: bool =Field(description="True if the current assistant can handle the user request.  False otherwise")
     reason: str
+    request: str=Field(description="Any necessary follow-up questions the assistant should clarify  before proceeding. ")
 
 class toConceptualAssistant(BaseModel):
     """

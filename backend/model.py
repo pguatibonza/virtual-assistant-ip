@@ -169,7 +169,7 @@ class State(TypedDict):
     level : str
     problem_description : str
     escalated: bool
-    user_request : str
+    request : str
 
 
 graph_builder=StateGraph(State)
@@ -178,7 +178,7 @@ async def router_senecode_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
     message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"})  
-    return {"escalated": message.proceed, "problem_description":state.get("problem_description",""),"user_request":message.request} 
+    return {"escalated": message.proceed, "problem_description":state.get("problem_description",""),"request":message.request} 
 
 async def senecode_assistant(state:State):
     user_input=state["user_input"]
@@ -191,11 +191,11 @@ async def router_conceptual_assistant(state : State):
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
     message = router_agent.invoke({"user_input":state["user_input"], "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
     #Se almacena el request para usarlo como query en la vector db
-    return {"escalated": message.proceed,"user_request":message.request} 
+    return {"escalated": message.proceed,"request":message.request} 
 
 async def conceptual_assistant(state:State):
     user_input = state['user_input']
-    user_request = state["user_request"]
+    user_request = state["request"]
 
     #Extrae contexto segun el query
     context= retriever.invoke(user_request)

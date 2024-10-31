@@ -20,10 +20,9 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from pprint import pprint
 from typing import Any,  Literal, Union, Optional,Callable
-from langchain_core.messages import  AnyMessage
+from langchain_core.messages import  AnyMessage,HumanMessage,RemoveMessage,SystemMessage,ToolMessage
 from langchain.schema import AIMessage
 from langchain_core.prompts import MessagesPlaceholder
-from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
@@ -170,10 +169,13 @@ class State(TypedDict):
     problem_description : str
     escalated: bool
     request : str
+    summary : str 
 
 
 graph_builder=StateGraph(State)
 memory = MemorySaver()
+
+### Nodes 
 async def router_senecode_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
@@ -229,8 +231,6 @@ async def revise_feedback_answer_to_user(state: State) -> dict:
     return {"messages": [new_message]}
 
 # Revise answer before sending it to the user
-
-
 async def revise_conceptual_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
@@ -246,6 +246,67 @@ async def revise_conceptual_answer_to_user(state: State) -> dict:
     id=message.id,
     )
     return {"messages": [new_message]}
+
+async def summarize_conversation(state: State):
+    # Get any existing summary
+    summary = state.get("summary", "")
+    
+    # Create summarization prompt
+    if summary:
+        # A summary already exists
+        summary_message = (
+            f"This is the summary of the conversation to date: {summary}\n\n"
+            "Extend the summary by taking into account the new messages above:"
+        )
+    else:
+        summary_message = "Create a summary of the conversation above:"
+    
+    # Add prompt to the history
+    messages = state["messages"] + [HumanMessage(content=summary_message)]
+    response = await chat.ainvoke(messages)
+
+    summary_content = f"Summary of conversation earlier : {response.content}"
+    summary_message = SystemMessage(content=summary_content)
+
+
+    # Identify the last 2 messages, including their tool call pairs if necessary
+    last_two_messages = state["messages"][-2:]  # Get the last two messages
+    final_messages = []  # To store the final messages we want to keep
+
+    for message in last_two_messages:
+        
+        final_messages.append(message)
+        print(message)
+        # If the message is a ToolMessage, make sure to include the following AI response
+        if isinstance(message, ToolMessage):
+            print("tool")
+            tool_index = state["messages"].index(message)
+            if tool_index - 1 < len(state["messages"]):
+                i=1
+                while  isinstance(state["messages"][tool_index - i],ToolMessage):
+                    final_messages.append(state["messages"][tool_index - i])
+                    i+=1   
+                final_messages.append(state["messages"][tool_index - i])
+    # Now prepare the list of messages to delete (all messages except the final ones)
+    delete_messages = [RemoveMessage(id=m.id) for m in state["messages"] if m not in final_messages]
+    new_messages = delete_messages + [summary_message]
+    return {"summary": response.content, "messages": new_messages}
+
+### Edges
+
+def should_summarize(state: State):
+        
+    """Return the next node to execute."""
+    
+    messages = state["messages"]
+    
+    # If there are more than x messages, then we summarize the conversation
+    if len(messages) > 12:
+        return "summarize_conversation"
+    
+    # Otherwise we can just end
+    return END
+
 
 def route_primary_assistant(
     state: State,
@@ -266,6 +327,7 @@ def route_primary_assistant(
             return "enter_feedback_assistant"
         return "tools"
     raise ValueError("Invalid route")
+
 
 async def route_to_workflow(
     state: State,
@@ -366,12 +428,14 @@ graph_builder.add_conditional_edges("router_feedback_assistant",route_router_fee
 
 # Add revision node
 graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
-graph_builder.add_edge("revise_feedback_answer", END)
+graph_builder.add_conditional_edges("revise_feedback_answer", should_summarize)
 
 # Add conceptual revision node
 graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_user)
-graph_builder.add_edge("revise_conceptual_answer", END)
+graph_builder.add_conditional_edges("revise_conceptual_answer", should_summarize)
 
+#Add summarize conversarion node
+graph_builder.add_node("summarize_conversation",summarize_conversation)
 
 graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_name]))
 graph_builder.add_edge("tools","primary_assistant")

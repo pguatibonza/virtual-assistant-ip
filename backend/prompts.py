@@ -114,7 +114,7 @@ or continue with the current assistant.
 
 If the user input is ambigous, read the previous messages so you have context to make decisions.
 Take in count that the feedback assistant helps with
-explanations of programming problems, programming problems in general and code, so most of the time you shoul continue in the same assistant. 
+explanations of programming problems, programming problems in general and code, so most of the time you should continue in the same assistant. 
 If the user wants to get explanation of a problem, proceed with the current assistant.
 
 The conceptual assistant is only for retrieving technical info from a vector db, only needed 
@@ -123,6 +123,7 @@ The conceptual assistant is only for retrieving technical info from a vector db,
     - if the student is asking for help with the explanation of a programming problem or anything related to a programming problem. 
     - If the studnet is asking for guidance/orientantion or how to begin with the programming problem 
     - If the student is asking for more detailed/tailored responses
+    - If the user input is code 
 - **Conceptual Assistant**: 
     - Only continue if the student is asking about topics  such as variables, conditionals, loops, or external libraries, or info that you can extract from a database . 
     - You CANNOT proceed if the user is asking anything about a programming problem

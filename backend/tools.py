@@ -1,3 +1,4 @@
+import logging
 from typing import Literal, Optional
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_openai import AzureChatOpenAI
@@ -6,6 +7,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from backend.db_connection import fetch_data
 # from db_connection import fetch_data
+
+log = logging.getLogger(__name__)
 
 class CompleteOrEscalate(BaseModel):
     """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
@@ -46,8 +49,8 @@ def find_problem_name(problem_name):
     It returns a list of problem names that match the user input, if any.
     This tool is useful to get the correct problem name to query the database for the problem description.    
     """
-    query = f"SELECT titulo FROM calificador_anonimo.dashboard_problema;"
-
+    query = "SELECT titulo FROM calificador_anonimo.dashboard_problema;"
+    log.warning(query)
     exercises=fetch_data(query); 
 
     chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique")
@@ -74,6 +77,7 @@ def find_problem_name(problem_name):
         "problem_list": []
     }}
     """
+    log.warning(FIND_PROBLEM_NAME_PROMPT)
     
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -85,7 +89,7 @@ def find_problem_name(problem_name):
     sql_agent = prompt | chat.with_structured_output(ProblemName)
 
     response=sql_agent.invoke({"user_input":problem_name,"exercises":exercises})
-    print(response)
+    log.warning(response)
     if response.found:
         return response.problem_list
     else :
@@ -97,6 +101,9 @@ def extract_problem_info(problem_name):
     Extract the problem info based on the problem name
     """
     query = f"SELECT * FROM calificador_anonimo.dashboard_problema WHERE titulo = '{problem_name}' LIMIT 1;"
+    log.warning(query)
+    exercise=fetch_data(query)
+    log.warning(exercise)
     if exercise:=fetch_data(query):
         try:
             exercise=exercise[0]

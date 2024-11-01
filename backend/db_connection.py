@@ -7,17 +7,8 @@ logger = logging.getLogger(__name__)
 USER = os.getenv('DB_USER')
 PASSWORD = os.getenv('DB_PASSWORD')
 
-# Determine if the code is running inside a Docker container
-def get_mysql_host():
-    if os.path.exists('/.dockerenv'):
-        # Running inside Docker
-        return "host.docker.internal"
-    else:
-        # Running locally
-        return "localhost"
 
-# Use the function to set the MySQL host
-HOST = get_mysql_host()
+HOST = 'localhost'
 logger.warning(f"HOST: {HOST}")
 
 # Connect to the database
@@ -44,3 +35,4 @@ def fetch_data(query):
     finally:
         if connection:
             connection.close()
+            

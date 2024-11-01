@@ -1,4 +1,8 @@
 import os
+import logging
+log = logging.getLogger("myapp")
+log.warning("load_data file")
+logging.basicConfig()
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PDFMinerLoader
 from langchain_openai import AzureOpenAIEmbeddings
@@ -15,8 +19,11 @@ from langchain_community.document_loaders import DirectoryLoader
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+log.warning("SUPABASE_URL "+SUPABASE_URL)
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+log.warning("SUPABASE_KEY "+SUPABASE_KEY)
 TABLE_NAME=os.getenv("TABLE_NAME")
+log.warning("TABLE_NAME "+TABLE_NAME)
 
 embeddings= AzureOpenAIEmbeddings(azure_deployment="gpt4-embedding-ada-002")
 # Crear cliente de Supabase

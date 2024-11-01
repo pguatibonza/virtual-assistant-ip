@@ -20,17 +20,16 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from pprint import pprint
 from typing import Any,  Literal, Union, Optional,Callable
-from langchain_core.messages import  AnyMessage
+from langchain_core.messages import  AnyMessage,HumanMessage,RemoveMessage,SystemMessage,ToolMessage
 from langchain.schema import AIMessage
 from langchain_core.prompts import MessagesPlaceholder
-from langchain_core.messages import ToolMessage
 import logging
 import os
 from backend import load_data
-from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT
-from backend.tools import AssistantName, CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
+from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
+from backend.tools import AssistantName, ContinueOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
-# from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, QUESTION_REWRITER_PROMPT
+# from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 # from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
 
 #Inicialización variables
@@ -76,25 +75,46 @@ primary_assistant_prompt=ChatPromptTemplate.from_messages(
     [
         ("system",PRIMARY_ASSISTANT_PROMPT),
         ("placeholder","{messages}"),
-        ("human", " {user_input}" ),
         
     ]
 )
 
 primary_assistant = primary_assistant_prompt | chat.bind_tools([toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name])
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=False)
 
+#Route agents
+
+chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=False)
 
 prompt = ChatPromptTemplate.from_messages(
     [
         ("system", ASSISTANT_ROUTER_PROMPT),
         ("placeholder","{messages}"),
-        ("human","{user_input}")
     ]
 )
 
-router_agent= prompt | chat.bind_tools([CompleteOrEscalate])
+router_agent= prompt | chat.with_structured_output(ContinueOrEscalate)
+
+# Feedback revision answer
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", FEEDBACK_REVISION_PROMPT),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+feedback_revision_agent = prompt | chat
+
+
+#Conceptual revision answer
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", CONCEPTUAL_REVISION_PROMPT),
+        ("placeholder", "{messages}"),
+    ]
+)
+
+conceptual_revision_agent = prompt | chat
 
 
 #Utilities
@@ -102,20 +122,26 @@ router_agent= prompt | chat.bind_tools([CompleteOrEscalate])
 def create_entry_node(assistant_name: str, new_dialog_state: str) -> Callable:
     def entry_node(state: State) -> dict:
         tool_call_id = state["messages"][-1].tool_calls[0]["id"]
-        return {
+        args = state["messages"][-1].tool_calls[0]["args"]
+
+        # Crear el diccionario de retorno con cada llave y valor de args
+        result_dict = {
             "messages": [
                 ToolMessage(
-                    content=f"The assistant is now the {assistant_name}. Reflect on the above conversation between the host assistant and the user."
-                    f" The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are {assistant_name},"
-                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
-                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    content=f"The assistant is now the {assistant_name}. Reflect on the above conversation between the host assistant and the user.",
                     tool_call_id=tool_call_id,
                 )
             ],
             "dialog_state": new_dialog_state,
         }
 
+        # Agregar cada par llave-valor de args al diccionario de retorno
+        result_dict.update(args)
+
+        return result_dict
+
     return entry_node
+
 #Graph
 def update_dialog_stack(left: list[str], right: Optional[str]) -> list[str]:
     """Push or pop the state."""
@@ -133,7 +159,7 @@ class State(TypedDict):
         list[
             Literal[
                 "primary_assistant",
-                "feedback_assistant",
+                "router_feedback_assistant",
                 "conceptual_assistant",
                 "revise_answer"
             ]
@@ -141,49 +167,44 @@ class State(TypedDict):
     ]
     level : str
     problem_description : str
+    escalated: bool
+    request : str
+    summary : str 
 
 
 graph_builder=StateGraph(State)
 memory = MemorySaver()
 
-
-async def senecode_assistant(state:State):
-    message=state['messages'][-2]
-    if message.tool_calls:
-        if message.tool_calls[0]["name"]== toFeedbackAssistant.__name__:
-            state["problem_description"]=message.tool_calls[0]["args"]['problem_description']
-            state["user_input"]=message.tool_calls[0]["args"]["code"]
-    else :
-        state["user_input"]=state["messages"][-1]
-        state["problem_description"]=state.get("problem_description")
+### Nodes 
+async def router_senecode_assistant(state:State):
 
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
-    message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"}) 
-    
-    if message.tool_calls:
-        return {"messages":[message]}
-    else :
-        feedback_message= feedback_agent.invoke(
-        {"problem_description":state["problem_description"], "user_input":state["user_input"], "messages":state["messages"]})
-        
-        return {"messages" : [feedback_message], "problem_description": state["problem_description"]}
+    message = router_agent.invoke({"user_input":state["user_input"],"messages":state["messages"],"assistant_name":"feedback_assistant"})  
+    return {"escalated": message.proceed, "problem_description":state.get("problem_description",""),"request":message.request} 
 
+async def senecode_assistant(state:State):
+    user_input=state["user_input"]
+
+    feedback_message= feedback_agent.invoke({"problem_description":state["problem_description"], "user_input":user_input, "messages":state["messages"]})
+        
+    return {"messages" : [feedback_message]}
+
+async def router_conceptual_assistant(state : State):
+    #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
+    message = router_agent.invoke({"user_input":state["user_input"], "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
+    #Se almacena el request para usarlo como query en la vector db
+    return {"escalated": message.proceed,"request":message.request} 
 
 async def conceptual_assistant(state:State):
     user_input = state['user_input']
+    user_request = state["request"]
 
-    #Identifica si el input del usuario lo puede responder el conceptual assistant o lo redirecciona
-    message = router_agent.invoke({"user_input":user_input, "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
-    if message.tool_calls:
-        return {"messages" : [message]}
-    else : 
+    #Extrae contexto segun el query
+    context= retriever.invoke(user_request)
 
-        #Extrae contexto segun el query
-        context= retriever.invoke(user_input)
-
-        #Responde de acuerdo al contexto
-        response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
-        return {"messages": [response]}
+    #Responde de acuerdo al contexto
+    response= await conceptual_agent.ainvoke({"user_input":user_input,"messages":state["messages"],"context":context,"level":state["level"]})
+    return {"messages": [response]}
 
 
 
@@ -192,32 +213,13 @@ async def main_assistant(state:State):
     message= await primary_assistant.ainvoke({"user_input":state['user_input'],"messages":state['messages']})
     return {"messages":[message] }
 
-    # Revise answer before sending it to the user
-    chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
-
-prompt = """
-The following was written to help a student in a CS class. 
-However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
-We need to provide help without including example code. 
-To do this, rewrite the following to remove any code blocks so that the response explains what the student should do but does not provide solution code.
-[original response to be rewritten]: {assistant_answer}
-"""
-
-feedback_revision_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", prompt),
-        ("placeholder", "{messages}"),
-    ]
-)
-
-feedback_revision_agent = feedback_revision_prompt | chat
 
 async def revise_feedback_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
     """
     message = state["messages"][-1]
-    if message.tool_calls:
+    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
         return {"messages": [message]}
     response = await feedback_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
     # Update the response message with the last message ID
@@ -229,31 +231,12 @@ async def revise_feedback_answer_to_user(state: State) -> dict:
     return {"messages": [new_message]}
 
 # Revise answer before sending it to the user
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique", streaming=True)
-
-prompt = """
-The following was written to help a student in a CS class. 
-However, any example code (such as in ``` Markdown delimiters) can give the student an assignment’s answer rather than help them figure it out themselves. 
-Keep the code blocks that explain programming concepts in general.
-If a code block gives a specific problem solution to a user problem, remove it.
-[original response to be rewritten]: {assistant_answer}
-"""
-
-conceptual_revision_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", prompt),
-        ("placeholder", "{messages}"),
-    ]
-)
-
-conceptual_revision_agent = conceptual_revision_prompt | chat
-
 async def revise_conceptual_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
     """
     message = state["messages"][-1]
-    if message.tool_calls:
+    if hasattr(message, "tool_calls") and len(message.tool_calls) > 0:
         return {"messages": [message]}
     response = await conceptual_revision_agent.ainvoke({"assistant_answer": state["messages"][-1].content})
     # Update the response message with the last message ID
@@ -263,6 +246,67 @@ async def revise_conceptual_answer_to_user(state: State) -> dict:
     id=message.id,
     )
     return {"messages": [new_message]}
+
+async def summarize_conversation(state: State):
+    # Get any existing summary
+    summary = state.get("summary", "")
+    
+    # Create summarization prompt
+    if summary:
+        # A summary already exists
+        summary_message = (
+            f"This is the summary of the conversation to date: {summary}\n\n"
+            "Extend the summary by taking into account the new messages above:"
+        )
+    else:
+        summary_message = "Create a summary of the conversation above:"
+    
+    # Add prompt to the history
+    messages = state["messages"] + [HumanMessage(content=summary_message)]
+    response = await chat.ainvoke(messages)
+
+    summary_content = f"Summary of conversation earlier : {response.content}"
+    summary_message = SystemMessage(content=summary_content)
+
+
+    # Identify the last 2 messages, including their tool call pairs if necessary
+    last_two_messages = state["messages"][-2:]  # Get the last two messages
+    final_messages = []  # To store the final messages we want to keep
+
+    for message in last_two_messages:
+        
+        final_messages.append(message)
+        print(message)
+        # If the message is a ToolMessage, make sure to include the following AI response
+        if isinstance(message, ToolMessage):
+            print("tool")
+            tool_index = state["messages"].index(message)
+            if tool_index - 1 < len(state["messages"]):
+                i=1
+                while  isinstance(state["messages"][tool_index - i],ToolMessage):
+                    final_messages.append(state["messages"][tool_index - i])
+                    i+=1   
+                final_messages.append(state["messages"][tool_index - i])
+    # Now prepare the list of messages to delete (all messages except the final ones)
+    delete_messages = [RemoveMessage(id=m.id) for m in state["messages"] if m not in final_messages]
+    new_messages = delete_messages + [summary_message]
+    return {"summary": response.content, "messages": new_messages}
+
+### Edges
+
+def should_summarize(state: State):
+        
+    """Return the next node to execute."""
+    
+    messages = state["messages"]
+    
+    # If there are more than x messages, then we summarize the conversation
+    if len(messages) > 12:
+        return "summarize_conversation"
+    
+    # Otherwise we can just end
+    return END
+
 
 def route_primary_assistant(
     state: State,
@@ -284,12 +328,13 @@ def route_primary_assistant(
         return "tools"
     raise ValueError("Invalid route")
 
+
 async def route_to_workflow(
     state: State,
 ) -> Literal[
     "primary_assistant",
-    "conceptual_assistant",
-    "feedback_assistant",
+    "conceptual",
+    "feedback",
 ]:
     """If we are in a delegated state, route directly to the appropriate assistant."""
 
@@ -300,7 +345,12 @@ async def route_to_workflow(
     return dialog_state[-1]
 
 
-#Por el momento se usara uno en conjunto apra feedback y conceptual
+# Maneja los edges del nodo router feedback assistant
+def route_router_feedback_assistant(state:State):
+    if not state["escalated"]:
+        return "leave_skill"
+    return "feedback_assistant"
+# Maneja los ejes del nodo feedback assistant  
 def route_feedback_assistant(
     state: State,
 ) -> Literal[
@@ -310,25 +360,32 @@ def route_feedback_assistant(
     route = tools_condition(state)
     if route == END:
         return "revise_feedback_answer"
-    tool_calls = state["messages"][-1].tool_calls
-    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
-    if did_cancel:
-        return "leave_skill"
     
-#Por el momento se usara uno en conjunto apra feedback y conceptual
-def route_conceptual_assistant(
-    state: State,
-) -> Literal[
-    "leave_skill",
-    "revise_conceptual_answer",
-]:
-    route = tools_condition(state)
-    if route == END:
-        return "revise_conceptual_answer"
+    ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
     tool_calls = state["messages"][-1].tool_calls
-    did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+    did_cancel = any(tc["name"] == ContinueOrEscalate.__name__ for tc in tool_calls)
     if did_cancel:
         return "leave_skill"
+# Maneja los edges del nodo router conceptual assistant
+def route_router_conceptual_assistant(state:State):
+    if not state["escalated"]:
+        return "leave_skill"
+    return "conceptual_assistant"
+ 
+# Con las modificaciones de router, solo es necesario que el conceptual vaya al revise answer, pues no hay mas nodos
+# def route_conceptual_assistant(
+#     state: State,
+# ) -> Literal[
+#     "leave_skill",
+#     "revise_conceptual_answer",
+# ]:
+#     route = tools_condition(state)
+#     if route == END:
+#         return "revise_conceptual_answer"
+#     tool_calls = state["messages"][-1].tool_calls
+#     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
+#     if did_cancel:
+#         return "leave_skill"
 
 # This node will be shared for exiting all specialized assistants
 def pop_dialog_state(state: State) -> dict:
@@ -338,13 +395,10 @@ def pop_dialog_state(state: State) -> dict:
     to specific sub-graphs.
     """
     messages = []
-    if state["messages"][-1].tool_calls:
-        # Note: Doesn't currently handle the edge case where the llm performs parallel tool calls
-        # TODO: Handle parallel tool calls
-        messages.append(
-            ToolMessage(
+
+    messages.append(
+            AIMessage(
                 content="Resuming dialog with the host assistant. Please reflect on the past conversation and assist the student as needed.",
-                tool_call_id=state["messages"][-1].tool_calls[0]["id"],
             )
         )
     return {
@@ -353,42 +407,41 @@ def pop_dialog_state(state: State) -> dict:
     }
 
 
-graph_builder.add_conditional_edges(START,route_to_workflow)
+graph_builder.add_conditional_edges(START,route_to_workflow,
+                                     
+                                    {"feedback" : "router_feedback_assistant" ,
+                                     "primary_assistant" : "primary_assistant" ,
+                                     "conceptual":"router_conceptual_assistant"} )
 graph_builder.add_node("primary_assistant",main_assistant)
 
-graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptual Programming assistant","conceptual_assistant"))
+graph_builder.add_node("enter_conceptual_assistant",create_entry_node("Conceptual Programming assistant","conceptual"))
 graph_builder.add_node("conceptual_assistant",conceptual_assistant)
 graph_builder.add_edge("enter_conceptual_assistant", "conceptual_assistant")
+graph_builder.add_node("router_conceptual_assistant",router_conceptual_assistant)
+graph_builder.add_conditional_edges("router_conceptual_assistant",route_router_conceptual_assistant )
 
-graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","feedback_assistant"))
+graph_builder.add_node("enter_feedback_assistant",create_entry_node("Feedback assistant","feedback"))
 graph_builder.add_node("feedback_assistant",senecode_assistant)
 graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
+graph_builder.add_node("router_feedback_assistant",router_senecode_assistant)
+graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant )
 
 # Add revision node
 graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
-graph_builder.add_edge("revise_feedback_answer", END)
+graph_builder.add_conditional_edges("revise_feedback_answer", should_summarize)
 
 # Add conceptual revision node
 graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_user)
-graph_builder.add_edge("revise_conceptual_answer", END)
+graph_builder.add_conditional_edges("revise_conceptual_answer", should_summarize)
 
+#Add summarize conversarion node
+graph_builder.add_node("summarize_conversation",summarize_conversation)
 
-tools=[extract_problem_info, find_problem_name]
-tool_node=ToolNode(tools)
-graph_builder.add_node("tools", tool_node)
+graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_name]))
 graph_builder.add_edge("tools","primary_assistant")
 
-graph_builder.add_conditional_edges(
-    "primary_assistant",
-    route_primary_assistant,
-    {
-        "enter_conceptual_assistant": "enter_conceptual_assistant",
-        "enter_feedback_assistant": "enter_feedback_assistant",
-        "tools":"tools",
-        "revise_feedback_answer": "revise_feedback_answer"
-    },
-)
-graph_builder.add_conditional_edges("conceptual_assistant", route_conceptual_assistant)
+graph_builder.add_conditional_edges("primary_assistant",route_primary_assistant,)
+graph_builder.add_edge("conceptual_assistant", "revise_conceptual_answer")
 graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")

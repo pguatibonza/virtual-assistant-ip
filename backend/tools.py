@@ -10,7 +10,7 @@ from backend.db_connection import fetch_data
 
 log = logging.getLogger(__name__)
 
-class CompleteOrEscalate(BaseModel):
+class ContinueOrEscalate(BaseModel):
     """A tool to mark the current task as completed and/or to escalate control of the dialog to the main assistant,
     who can re-route the dialog based on the student's needs."""
     proceed: bool =Field(description="True if the current assistant can handle the user request.  False otherwise")

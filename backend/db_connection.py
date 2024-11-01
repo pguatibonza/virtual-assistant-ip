@@ -1,9 +1,15 @@
 import os
+import logging
 import pymysql.cursors
 
-HOST = os.getenv('DB_HOST')
+logger = logging.getLogger(__name__)
+
 USER = os.getenv('DB_USER')
 PASSWORD = os.getenv('DB_PASSWORD')
+
+
+HOST = 'localhost'
+logger.warning(f"HOST: {HOST}")
 
 # Connect to the database
 def fetch_data(query):
@@ -29,3 +35,4 @@ def fetch_data(query):
     finally:
         if connection:
             connection.close()
+            

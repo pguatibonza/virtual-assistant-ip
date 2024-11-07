@@ -1,8 +1,4 @@
 import logging
-log = logging.getLogger("myapp")
-log.warning("woot")
-logging.basicConfig()
-log.warning("woot")
 import os
 import sys
 import asyncio
@@ -11,6 +7,8 @@ import streamlit as st
 from frontend.chatbot_ui import app
 from frontend.login import login
 
+logging.basicConfig()
+log = logging.getLogger(__name__)
  
 if __name__ == "__main__":
     logging.basicConfig(

@@ -3,6 +3,7 @@ from backend.model import graph
 import random
 import time
 import asyncio
+import secrets
 
 def disable():
     st.session_state["disabled"] = True
@@ -12,21 +13,26 @@ def enable():
     
 async def app():
 
-    st.title("Bienvenido")
-    st.write("¡Hola! Haz preguntas relacionadas con los temas de la clase o pide ayuda con los ejercicios de Senecode. Estoy aquí para ayudarte.")
+    st.title("¡Hola!")
+    st.write("Haz preguntas relacionadas con los temas de la clase o pide ayuda con los ejercicios de Senecode. Estoy aquí para ayudarte.")
     
     st.sidebar.markdown("Acciones")
     # Create a sidebar with a button to create a new chat
     if st.sidebar.button("Nueva conversación", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.disabled = False    
+        st.session_state.disabled = False
+        st.session_state.thread_id = secrets.token_hex(8)
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "disabled" not in st.session_state:
         st.session_state.disabled = False
+    if "thread_id" not in st.session_state:
+        st.session_state.thread_id = secrets.token_hex(8)
         
-
+    # Display the thread id of the current conversation
+    st.write(f"#### **ID Conversación Actual**: {st.session_state.thread_id}")
+        
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -37,7 +43,7 @@ async def app():
             st.markdown(user_input)
 
         # Define the config variable
-        config = {"configurable": {"thread_id": "1"}}
+        config = {"configurable": {"thread_id": st.session_state.thread_id}}
         
         with st.chat_message("assistant"):
             response = ""

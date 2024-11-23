@@ -26,8 +26,8 @@ from langchain_core.prompts import MessagesPlaceholder
 import logging
 import os
 from backend import load_data
-from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_PROMPT,SYNTAX_AGENT_PROMPT, SYNTAX_LEVEL_1,SYNTAX_LEVEL_2,SYNTAX_LEVEL_3,SYNTAX_LEVEL_4,LOGICAL_AGENT_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
-from backend.tools import AssistantName, ContinueOrEscalate,NextAssistant,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
+from backend.prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
+from backend.tools import AssistantName, ContinueOrEscalate,toConceptualAssistant,toFeedbackAssistant, extract_problem_info, find_problem_name
 # import load_data
 # from prompts import PRIMARY_ASSISTANT_PROMPT, FEEDBACK_AGENT_SYSTEM_PROMPT, RAG_AGENT_SYSTEM_PROMPT, ASSISTANT_ROUTER_PROMPT,  FEEDBACK_REVISION_PROMPT, CONCEPTUAL_REVISION_PROMPT
 # from tools import CompleteOrEscalate,toConceptualAssistant,toFeedbackAssistant,extract_problem_info,find_problem_name
@@ -46,35 +46,17 @@ chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=False)
 
 prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", FEEDBACK_AGENT_PROMPT),
+        ("system", FEEDBACK_AGENT_SYSTEM_PROMPT),
         ("placeholder","{messages}")
     ]
 )
 
-feedback_agent= prompt | chat.with_structured_output(NextAssistant )
+feedback_agent= prompt | chat
 
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True) 
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", SYNTAX_AGENT_PROMPT),
-        ("placeholder","{messages}")
-    ]
-).partial(SYNTAX_LEVEL_1=SYNTAX_LEVEL_1,SYNTAX_LEVEL_2=SYNTAX_LEVEL_2,SYNTAX_LEVEL_3=SYNTAX_LEVEL_3,SYNTAX_LEVEL_4=SYNTAX_LEVEL_4)
-
-syntax_agent= prompt | chat
-
-chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True) 
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", LOGICAL_AGENT_PROMPT),
-        ("placeholder","{messages}")
-    ]
-)
-
-logical_agent= prompt | chat
- 
 
 chat= AzureChatOpenAI(azure_deployment="gpt-4o-rfmanrique",streaming=True)
+
+
 prompt = ChatPromptTemplate.from_messages(
     [
         ("system", RAG_AGENT_SYSTEM_PROMPT),      
@@ -188,8 +170,6 @@ class State(TypedDict):
     escalated: bool
     request : str
     summary : str 
-    next_assistant : str
-    syntax : str
 
 
 graph_builder=StateGraph(State)
@@ -205,20 +185,10 @@ async def router_senecode_assistant(state:State):
 async def senecode_assistant(state:State):
     user_input=state["user_input"]
 
-    feedback_message= feedback_agent.invoke({ "user_input":user_input, "messages":state["messages"]})
-    
-    return {"next_assistant": feedback_message.assistant}
-async def syntactical_assistant(state:State):
-    user_input = state["user_input"]
+    feedback_message= feedback_agent.invoke({"problem_description":state["problem_description"], "user_input":user_input, "messages":state["messages"]})
+        
+    return {"messages" : [feedback_message]}
 
-    syntax_message = syntax_agent.invoke({"user_input": user_input,"messages":state["messages"]})
-
-    return {"syntax":syntax_message.content,"messages":[syntax_message]}
-async def logical_assistant(state:State):
-    user_input=state["user_input"]
-    logical_message = logical_agent.invoke({"user_input":user_input,"problem_description":state["problem_description"],"messages":state["messages"],"syntax":state.get("syntax","")})
-
-    return {"messages":[logical_message]}
 async def router_conceptual_assistant(state : State):
     #Identifica si el input del usuario lo puede responder el feedback assistant o lo redirecciona
     message = router_agent.invoke({"user_input":state["user_input"], "messages" : state['messages'], "assistant_name":"conceptual_assistant"})
@@ -384,23 +354,18 @@ def route_router_feedback_assistant(state:State):
 def route_feedback_assistant(
     state: State,
 ) -> Literal[
-    "syntactical_assistant",
-    "logical_assistant",
+    "leave_skill",
+    "revise_feedback_answer",
 ]:
-    next_assistant=state["next_assistant"]
-    if next_assistant == "Syntactical":
-        return "syntactical_assistant"
-    return "logical_assistant"
-
-    # if route == END:
-    #     return "revise_feedback_answer"
+    route = tools_condition(state)
+    if route == END:
+        return "revise_feedback_answer"
     
-    # ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
-    # tool_calls = state["messages"][-1].tool_calls
-    # did_cancel = any(tc["name"] == ContinueOrEscalate.__name__ for tc in tool_calls)
-    # if did_cancel:
-    #     return "leave_skill"
-
+    ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
+    tool_calls = state["messages"][-1].tool_calls
+    did_cancel = any(tc["name"] == ContinueOrEscalate.__name__ for tc in tool_calls)
+    if did_cancel:
+        return "leave_skill"
 # Maneja los edges del nodo router conceptual assistant
 def route_router_conceptual_assistant(state:State):
     if not state["escalated"]:
@@ -442,7 +407,8 @@ def pop_dialog_state(state: State) -> dict:
     }
 
 
-graph_builder.add_conditional_edges(START,route_to_workflow,                                  
+graph_builder.add_conditional_edges(START,route_to_workflow,
+                                     
                                     {"feedback" : "router_feedback_assistant" ,
                                      "primary_assistant" : "primary_assistant" ,
                                      "conceptual":"router_conceptual_assistant"} )
@@ -460,13 +426,6 @@ graph_builder.add_edge("enter_feedback_assistant", "feedback_assistant")
 graph_builder.add_node("router_feedback_assistant",router_senecode_assistant)
 graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant )
 
-#Add syntactical agent
-graph_builder.add_node("syntactical_assistant", syntactical_assistant)
-graph_builder.add_edge("syntactical_assistant","feedback_assistant")
-
-#Add logical agent
-graph_builder.add_node("logical_assistant",logical_assistant)
-graph_builder.add_edge("logical_assistant","revise_feedback_answer")
 # Add revision node
 graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
 graph_builder.add_conditional_edges("revise_feedback_answer", should_summarize)
@@ -477,7 +436,6 @@ graph_builder.add_conditional_edges("revise_conceptual_answer", should_summarize
 
 #Add summarize conversarion node
 graph_builder.add_node("summarize_conversation",summarize_conversation)
-graph_builder.add_edge("summarize_conversation",END)
 
 graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_name]))
 graph_builder.add_edge("tools","primary_assistant")

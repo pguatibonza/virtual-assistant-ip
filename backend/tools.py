@@ -41,10 +41,7 @@ class ProblemName(BaseModel):
 
     found: bool = Field(description="Whether the problem was found or not")
     problem_list: list[str] = Field(description="List of problems found", default=[])
-class NextAssistant(BaseModel):
-    """Identify the next assistant in the feedback system"""
 
-    assistant : Literal["Syntactical","Logical"] = Field(description="Name of the assistant to redirect")
 @tool
 def find_problem_name(problem_name):
     """

@@ -117,7 +117,7 @@ def extract_problem_info(problem_name):
                 FROM calificador_anonimo.dashboard_problema_funciones_prohibidas AS fp
                 JOIN calificador_anonimo.dashboard_funcion AS f
                 ON f.id = fp.funcion_id
-                WHERE fp.problema_id = 157;
+                WHERE fp.problema_id = {exercise['id']};
             """
             if primitives := fetch_data(query):
                 primitives_str = "\n".join([f"name: {prim['nombre']} - description: {prim['descripcion']}" for prim in primitives])

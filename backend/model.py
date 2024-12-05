@@ -161,7 +161,7 @@ class State(TypedDict):
                 "primary_assistant",
                 "router_feedback_assistant",
                 "conceptual_assistant",
-                "revise_answer"
+                "evaluate_answer"
             ]
         ],update_dialog_stack
     ]
@@ -214,7 +214,7 @@ async def main_assistant(state:State):
     return {"messages":[message] }
 
 
-async def revise_feedback_answer_to_user(state: State) -> dict:
+async def evaluate_feedback_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
     """
@@ -231,7 +231,7 @@ async def revise_feedback_answer_to_user(state: State) -> dict:
     return {"messages": [new_message]}
 
 # Revise answer before sending it to the user
-async def revise_conceptual_answer_to_user(state: State) -> dict:
+async def evaluate_conceptual_answer_to_user(state: State) -> dict:
     """Revise the answer to the user.
     The answer cannot contain code snippets.
     """
@@ -314,11 +314,11 @@ def route_primary_assistant(
     "enter_conceptual_assistant",
     "enter_feedback_assistant",
     "tools",
-    "revise_feedback_answer"
+    "evaluate_feedback_answer"
 ]:
     route = tools_condition(state)
     if route == END:
-        return "revise_feedback_answer"
+        return "evaluate_feedback_answer"
     tool_calls = state["messages"][-1].tool_calls
     if tool_calls:
         if tool_calls[0]["name"] == toConceptualAssistant.__name__:
@@ -355,11 +355,11 @@ def route_feedback_assistant(
     state: State,
 ) -> Literal[
     "leave_skill",
-    "revise_feedback_answer",
+    "evaluate_feedback_answer",
 ]:
     route = tools_condition(state)
     if route == END:
-        return "revise_feedback_answer"
+        return "evaluate_feedback_answer"
     
     ###Lo de abajo ya no va. #TODO Separa asistente en varios componentes
     tool_calls = state["messages"][-1].tool_calls
@@ -372,16 +372,16 @@ def route_router_conceptual_assistant(state:State):
         return "leave_skill"
     return "conceptual_assistant"
  
-# Con las modificaciones de router, solo es necesario que el conceptual vaya al revise answer, pues no hay mas nodos
+# Con las modificaciones de router, solo es necesario que el conceptual vaya al evaluate answer, pues no hay mas nodos
 # def route_conceptual_assistant(
 #     state: State,
 # ) -> Literal[
 #     "leave_skill",
-#     "revise_conceptual_answer",
+#     "evaluate_conceptual_answer",
 # ]:
 #     route = tools_condition(state)
 #     if route == END:
-#         return "revise_conceptual_answer"
+#         return "evaluate_conceptual_answer"
 #     tool_calls = state["messages"][-1].tool_calls
 #     did_cancel = any(tc["name"] == CompleteOrEscalate.__name__ for tc in tool_calls)
 #     if did_cancel:
@@ -427,12 +427,12 @@ graph_builder.add_node("router_feedback_assistant",router_senecode_assistant)
 graph_builder.add_conditional_edges("router_feedback_assistant",route_router_feedback_assistant )
 
 # Add revision node
-graph_builder.add_node("revise_feedback_answer", revise_feedback_answer_to_user)
-graph_builder.add_conditional_edges("revise_feedback_answer", should_summarize)
+graph_builder.add_node("evaluate_feedback_answer", evaluate_feedback_answer_to_user)
+graph_builder.add_conditional_edges("evaluate_feedback_answer", should_summarize)
 
 # Add conceptual revision node
-graph_builder.add_node("revise_conceptual_answer", revise_conceptual_answer_to_user)
-graph_builder.add_conditional_edges("revise_conceptual_answer", should_summarize)
+graph_builder.add_node("evaluate_conceptual_answer", evaluate_conceptual_answer_to_user)
+graph_builder.add_conditional_edges("evaluate_conceptual_answer", should_summarize)
 
 #Add summarize conversarion node
 graph_builder.add_node("summarize_conversation",summarize_conversation)
@@ -441,7 +441,7 @@ graph_builder.add_node("tools", ToolNode([extract_problem_info, find_problem_nam
 graph_builder.add_edge("tools","primary_assistant")
 
 graph_builder.add_conditional_edges("primary_assistant",route_primary_assistant,)
-graph_builder.add_edge("conceptual_assistant", "revise_conceptual_answer")
+graph_builder.add_edge("conceptual_assistant", "evaluate_conceptual_answer")
 graph_builder.add_conditional_edges("feedback_assistant",route_feedback_assistant)
 graph_builder.add_node("leave_skill",pop_dialog_state)
 graph_builder.add_edge("leave_skill", "primary_assistant")

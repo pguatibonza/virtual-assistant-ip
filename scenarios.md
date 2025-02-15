@@ -10,10 +10,10 @@ In this scenario, students ask conceptual questions about programming topics. Th
 - Assistant: [Provides detailed conceptual explanation]
 
 ## Scenario 2: Feedback Request for a Specific Problem
-Students request help with a specific programming problem from Senecode. The assistant confirms the problem name and provides targeted feedback.
+Students request help with a specific programming problem from BLINDED-PLATFORM. The assistant confirms the problem name and provides targeted feedback.
 
 **Example Interaction:**
-- Student: "Hello, I need help with the problem 'La estación de transmilenio' on Senecode."
+- Student: "Hello, I need help with the problem 'La estación de transmilenio' on BLINDED-PLATFORM."
 - Assistant: "Sure, I'd be happy to help. Could you confirm the problem name so I can look it up?"
 - Student: "Yes, it's called 'La estación de transmilenio'."
 - Assistant: [Provides problem description and requests code for evaluation]
@@ -41,7 +41,7 @@ When students provide unclear requests, the assistant asks for clarification to 
 
 **Example Interaction:**
 - Student: "I'm stuck with my assignment."
-- Assistant: "I understand, could you provide more details about the specific problem you need help with? If it's a Senecode problem, please give me the problem name so I can assist you better. If it's a conceptual doubt, please explain the specific concept you don't understand."
+- Assistant: "I understand, could you provide more details about the specific problem you need help with? If it's a BLINDED-PLATFORM problem, please give me the problem name so I can assist you better. If it's a conceptual doubt, please explain the specific concept you don't understand."
 - Student: "It's about functions."
 - Assistant: [Requests more specific information]
 - Student: "I need help understanding how to define a function."
@@ -55,7 +55,7 @@ The assistant adapts when students switch from conceptual questions to specific 
 - Assistant: [Asks for specifics]
 - Student: "Explain everything about dictionaries."
 - Assistant: [Provides conceptual information]
-- Student: "I'm stuck with my Senecode problem about dictionaries, it's called 'La estación de transmilenio'."
+- Student: "I'm stuck with my BLINDED-PLATFORM problem about dictionaries, it's called 'La estación de transmilenio'."
 - Assistant: [Switches to problem-specific assistance]
 
 ## Scenario 7: Change of Request by User (Feedback)
@@ -74,7 +74,7 @@ The assistant redirects students when questions fall outside the course scope.
 
 **Example Interaction:**
 - Student: "Hello, can you help me with my math homework on calculus?"
-- Assistant: "I'm sorry, but I can only help with questions related to the Introduction to Programming in Python course. Do you have any questions about programming or a specific problem in Senecode that you need help with?"
+- Assistant: "I'm sorry, but I can only help with questions related to the Introduction to Programming in Python course. Do you have any questions about programming or a specific problem in BLINDED-PLATFORM that you need help with?"
 
 ## Scenario 9: Direct Request for Solution Code
 The assistant encourages learning rather than providing direct solutions.
